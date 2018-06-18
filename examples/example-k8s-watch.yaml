@@ -1,0 +1,7 @@
+apiVersion: fim-k8s.clustergarage.io/v1alpha1
+kind: FimWatch
+metadata:
+  name: example-fim-watch
+spec:
+  deploymentName: example-fim-watch
+  replicas: 1
