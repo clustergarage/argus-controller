@@ -1,0 +1,10 @@
+ROOT_PACKAGE="github.com/clustergarage/fim-k8s"
+CUSTOM_RESOURCE_NAME="fim-k8s"
+CUSTOM_RESOURCE_VERSION="v1alpha1"
+
+go get -u k8s.io/code-generator/...
+cd $GOPATH/src/k8s.io/code-generator
+
+./generate-groups.sh all "$ROOT_PACKAGE/pkg/client" "$ROOT_PACKAGE/pkg/apis" "$CUSTOM_RESOURCE_NAME:$CUSTOM_RESOURCE_VERSION"
+
+tree $GOPATH/src/$ROOT_PACKAGE/pkg/client

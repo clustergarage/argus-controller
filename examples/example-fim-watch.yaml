@@ -1,4 +1,4 @@
-apiVersion: fim-k8s.clustergarage.io/v1alpha1
+apiVersion: fim.clustergarage.io/v1alpha1
 kind: FimWatch
 metadata:
   name: example-fim-watch
