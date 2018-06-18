@@ -19,7 +19,7 @@ limitations under the License.
 package versioned
 
 import (
-	fimv1alpha1 "github.com/clustergarage/fim-k8s/pkg/client/clientset/versioned/typed/fim/v1alpha1"
+	fimv1alpha1 "github.com/clustergarage/fim-k8s/pkg/client/clientset/versioned/typed/fimwatch/v1alpha1"
 	discovery "k8s.io/client-go/discovery"
 	rest "k8s.io/client-go/rest"
 	flowcontrol "k8s.io/client-go/util/flowcontrol"

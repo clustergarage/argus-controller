@@ -21,10 +21,10 @@ package v1alpha1
 import (
 	time "time"
 
-	fim_v1alpha1 "github.com/clustergarage/fim-k8s/pkg/apis/fim/v1alpha1"
+	fimwatch_v1alpha1 "github.com/clustergarage/fim-k8s/pkg/apis/fimwatch/v1alpha1"
 	versioned "github.com/clustergarage/fim-k8s/pkg/client/clientset/versioned"
 	internalinterfaces "github.com/clustergarage/fim-k8s/pkg/client/informers/externalversions/internalinterfaces"
-	v1alpha1 "github.com/clustergarage/fim-k8s/pkg/client/listers/fim/v1alpha1"
+	v1alpha1 "github.com/clustergarage/fim-k8s/pkg/client/listers/fimwatch/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"
@@ -70,7 +70,7 @@ func NewFilteredFimWatchInformer(client versioned.Interface, namespace string, r
 				return client.FimV1alpha1().FimWatches(namespace).Watch(options)
 			},
 		},
-		&fim_v1alpha1.FimWatch{},
+		&fimwatch_v1alpha1.FimWatch{},
 		resyncPeriod,
 		indexers,
 	)
@@ -81,7 +81,7 @@ func (f *fimWatchInformer) defaultInformer(client versioned.Interface, resyncPer
 }
 
 func (f *fimWatchInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&fim_v1alpha1.FimWatch{}, f.defaultInformer)
+	return f.factory.InformerFor(&fimwatch_v1alpha1.FimWatch{}, f.defaultInformer)
 }
 
 func (f *fimWatchInformer) Lister() v1alpha1.FimWatchLister {

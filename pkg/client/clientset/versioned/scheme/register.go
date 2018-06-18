@@ -19,7 +19,7 @@ limitations under the License.
 package scheme
 
 import (
-	fimv1alpha1 "github.com/clustergarage/fim-k8s/pkg/apis/fim/v1alpha1"
+	fimv1alpha1 "github.com/clustergarage/fim-k8s/pkg/apis/fimwatch/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"

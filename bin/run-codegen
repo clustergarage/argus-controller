@@ -1,5 +1,5 @@
 ROOT_PACKAGE="github.com/clustergarage/fim-k8s"
-CUSTOM_RESOURCE_NAME="fim"
+CUSTOM_RESOURCE_NAME="fimwatch"
 CUSTOM_RESOURCE_VERSION="v1alpha1"
 
 go get -u k8s.io/code-generator/...

@@ -1,7 +1,7 @@
 package v1alpha1
 
 import (
-	meta_v1 "k8s.io/apimachineryapis/meta/v1"
+	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -9,7 +9,7 @@ import (
 	fimwatch "github.com/clustergarage/fim-k8s/pkg/apis/fimwatch"
 )
 
-var SchemeGroupVersion = scheme.GroupVersion{
+var SchemeGroupVersion = schema.GroupVersion{
 	Group:   fimwatch.GroupName,
 	Version: "v1alpha1",
 }
@@ -19,7 +19,7 @@ func Kind(kind string) schema.GroupKind {
 }
 
 func Resource(resource string) schema.GroupResource {
-	return SchemeBuilder.WithResource(resource).GroupResource()
+	return SchemeGroupVersion.WithResource(resource).GroupResource()
 }
 
 var (

@@ -19,7 +19,7 @@ limitations under the License.
 package fim
 
 import (
-	v1alpha1 "github.com/clustergarage/fim-k8s/pkg/client/informers/externalversions/fim/v1alpha1"
+	v1alpha1 "github.com/clustergarage/fim-k8s/pkg/client/informers/externalversions/fimwatch/v1alpha1"
 	internalinterfaces "github.com/clustergarage/fim-k8s/pkg/client/informers/externalversions/internalinterfaces"
 )
 

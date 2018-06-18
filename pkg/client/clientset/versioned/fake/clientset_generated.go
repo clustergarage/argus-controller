@@ -20,8 +20,8 @@ package fake
 
 import (
 	clientset "github.com/clustergarage/fim-k8s/pkg/client/clientset/versioned"
-	fimv1alpha1 "github.com/clustergarage/fim-k8s/pkg/client/clientset/versioned/typed/fim/v1alpha1"
-	fakefimv1alpha1 "github.com/clustergarage/fim-k8s/pkg/client/clientset/versioned/typed/fim/v1alpha1/fake"
+	fimv1alpha1 "github.com/clustergarage/fim-k8s/pkg/client/clientset/versioned/typed/fimwatch/v1alpha1"
+	fakefimv1alpha1 "github.com/clustergarage/fim-k8s/pkg/client/clientset/versioned/typed/fimwatch/v1alpha1/fake"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/discovery"

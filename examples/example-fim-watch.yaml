@@ -3,5 +3,4 @@ kind: FimWatch
 metadata:
   name: example-fim-watch
 spec:
-  deploymentName: example-fim-watch
-  replicas: 1
+  message: Hello, world!
