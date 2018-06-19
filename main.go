@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"os"
 	"os/signal"
 	"syscall"
@@ -17,13 +18,18 @@ import (
 	fimwatchinformer_v1alpha1 "github.com/clustergarage/fim-k8s/pkg/client/informers/externalversions/fimwatch/v1alpha1"
 )
 
+var (
+	kubeconfig string
+)
+
+func init() {
+	flag.StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig. Only required if out-of-cluster.")
+}
+
 // retrieve the Kubernetes cluster client from outside of the cluster
 func getKubernetesClient() (kubernetes.Interface, fimwatchclientset.Interface) {
-	// construct the path to resolve to `~/.kube/config`
-	kubeConfigPath := os.Getenv("HOME") + "/.kube/config"
-
 	// create the config from the path
-	config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		log.Fatalf("getClusterConfig: %v", err)
 	}
@@ -45,6 +51,8 @@ func getKubernetesClient() (kubernetes.Interface, fimwatchclientset.Interface) {
 
 // main code path
 func main() {
+	flag.Parse()
+
 	// get the Kubernetes client for connectivity
 	client, fimwatchClient := getKubernetesClient()
 
@@ -72,7 +80,7 @@ func main() {
 			// convert the resource object into a key (in this case
 			// we are just doing it in the format of 'namespace/name')
 			key, err := cache.MetaNamespaceKeyFunc(obj)
-			log.Infof("Add fimwatch: %s", key)
+			log.Infof(" === ADD === fimwatch: %s", key)
 			if err == nil {
 				// add the key to the queue for the handler to get
 				queue.Add(key)
@@ -80,7 +88,7 @@ func main() {
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
 			key, err := cache.MetaNamespaceKeyFunc(newObj)
-			log.Infof("Update fimwatch: %s", key)
+			log.Infof(" === UPDATE === fimwatch: %s", key)
 			if err == nil {
 				queue.Add(key)
 			}
@@ -92,7 +100,7 @@ func main() {
 			//
 			// this then in turn calls MetaNamespaceKeyFunc
 			key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
-			log.Infof("Delete fimwatch: %s", key)
+			log.Infof(" === DELETE === fimwatch: %s", key)
 			if err == nil {
 				queue.Add(key)
 			}
