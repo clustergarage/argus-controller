@@ -21,7 +21,7 @@ package externalversions
 import (
 	"fmt"
 
-	v1alpha1 "github.com/clustergarage/fim-k8s/pkg/apis/fimwatch/v1alpha1"
+	v1alpha1 "github.com/clustergarage/fim-k8s/pkg/apis/fimcontroller/v1alpha1"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	cache "k8s.io/client-go/tools/cache"
 )
@@ -52,9 +52,9 @@ func (f *genericInformer) Lister() cache.GenericLister {
 // TODO extend this to unknown resources with a client pool
 func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource) (GenericInformer, error) {
 	switch resource {
-	// Group=fim.clustergarage.io, Version=v1alpha1
-	case v1alpha1.SchemeGroupVersion.WithResource("fimwatches"):
-		return &genericInformer{resource: resource.GroupResource(), informer: f.Fim().V1alpha1().FimWatches().Informer()}, nil
+	// Group=fimcontroller.clustergarage.io, Version=v1alpha1
+	case v1alpha1.SchemeGroupVersion.WithResource("foos"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Fimcontroller().V1alpha1().Foos().Informer()}, nil
 
 	}
 

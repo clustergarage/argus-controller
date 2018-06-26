@@ -20,8 +20,8 @@ package fake
 
 import (
 	clientset "github.com/clustergarage/fim-k8s/pkg/client/clientset/versioned"
-	fimv1alpha1 "github.com/clustergarage/fim-k8s/pkg/client/clientset/versioned/typed/fimwatch/v1alpha1"
-	fakefimv1alpha1 "github.com/clustergarage/fim-k8s/pkg/client/clientset/versioned/typed/fimwatch/v1alpha1/fake"
+	fimcontrollerv1alpha1 "github.com/clustergarage/fim-k8s/pkg/client/clientset/versioned/typed/fimcontroller/v1alpha1"
+	fakefimcontrollerv1alpha1 "github.com/clustergarage/fim-k8s/pkg/client/clientset/versioned/typed/fimcontroller/v1alpha1/fake"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/discovery"
@@ -71,12 +71,12 @@ func (c *Clientset) Discovery() discovery.DiscoveryInterface {
 
 var _ clientset.Interface = &Clientset{}
 
-// FimV1alpha1 retrieves the FimV1alpha1Client
-func (c *Clientset) FimV1alpha1() fimv1alpha1.FimV1alpha1Interface {
-	return &fakefimv1alpha1.FakeFimV1alpha1{Fake: &c.Fake}
+// FimcontrollerV1alpha1 retrieves the FimcontrollerV1alpha1Client
+func (c *Clientset) FimcontrollerV1alpha1() fimcontrollerv1alpha1.FimcontrollerV1alpha1Interface {
+	return &fakefimcontrollerv1alpha1.FakeFimcontrollerV1alpha1{Fake: &c.Fake}
 }
 
-// Fim retrieves the FimV1alpha1Client
-func (c *Clientset) Fim() fimv1alpha1.FimV1alpha1Interface {
-	return &fakefimv1alpha1.FakeFimV1alpha1{Fake: &c.Fake}
+// Fimcontroller retrieves the FimcontrollerV1alpha1Client
+func (c *Clientset) Fimcontroller() fimcontrollerv1alpha1.FimcontrollerV1alpha1Interface {
+	return &fakefimcontrollerv1alpha1.FakeFimcontrollerV1alpha1{Fake: &c.Fake}
 }

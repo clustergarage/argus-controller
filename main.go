@@ -2,133 +2,60 @@ package main
 
 import (
 	"flag"
-	"os"
-	"os/signal"
-	"syscall"
+	"time"
 
-	log "github.com/Sirupsen/logrus"
-	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
+	"github.com/golang/glog"
+	kubeinformers "k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/util/workqueue"
 
-	fimwatchclientset "github.com/clustergarage/fim-k8s/pkg/client/clientset/versioned"
-	fimwatchinformer_v1alpha1 "github.com/clustergarage/fim-k8s/pkg/client/informers/externalversions/fimwatch/v1alpha1"
+	clientset "github.com/clustergarage/fim-k8s/pkg/client/clientset/versioned"
+	informers "github.com/clustergarage/fim-k8s/pkg/client/informers/externalversions"
+	"github.com/clustergarage/fim-k8s/pkg/signals"
 )
 
 var (
+	masterURL  string
 	kubeconfig string
 )
 
-func init() {
-	flag.StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig. Only required if out-of-cluster.")
-}
-
-// retrieve the Kubernetes cluster client from outside of the cluster
-func getKubernetesClient() (kubernetes.Interface, fimwatchclientset.Interface) {
-	// create the config from the path
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
-	if err != nil {
-		log.Fatalf("getClusterConfig: %v", err)
-	}
-
-	// generate the client based off of the config
-	client, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		log.Fatalf("getClusterConfig: %v", err)
-	}
-
-	fimwatchClient, err := fimwatchclientset.NewForConfig(config)
-	if err != nil {
-		log.Fatalf("getClusterConfig: %v", err)
-	}
-
-	log.Info("Successfully constructed k8s client")
-	return client, fimwatchClient
-}
-
-// main code path
 func main() {
 	flag.Parse()
 
-	// get the Kubernetes client for connectivity
-	client, fimwatchClient := getKubernetesClient()
+	// set up signals so we handle the first shutdown signal gracefully
+	stopCh := signals.SetupSignalHandler()
 
-	// retrieve our custom resource informer which was generated from
-	// the code generator and pass it the custom resource client, specifying
-	// we should be looking through all namespaces for listing and watching
-	informer := fimwatchinformer_v1alpha1.NewFimWatchInformer(
-		fimwatchClient,
-		meta_v1.NamespaceAll,
-		0,
-		cache.Indexers{},
-	)
-
-	// create a new queue so that when the informer gets a resource that is either
-	// a result of listing or watching, we can add an idenfitying key to the queue
-	// so that it can be handled in the handler
-	queue := workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter())
-
-	// add event handlers to handle the three types of events for resources:
-	//  - adding new resources
-	//  - updating existing resources
-	//  - deleting resources
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			// convert the resource object into a key (in this case
-			// we are just doing it in the format of 'namespace/name')
-			key, err := cache.MetaNamespaceKeyFunc(obj)
-			log.Infof(" === ADD === fimwatch: %s", key)
-			if err == nil {
-				// add the key to the queue for the handler to get
-				queue.Add(key)
-			}
-		},
-		UpdateFunc: func(oldObj, newObj interface{}) {
-			key, err := cache.MetaNamespaceKeyFunc(newObj)
-			log.Infof(" === UPDATE === fimwatch: %s", key)
-			if err == nil {
-				queue.Add(key)
-			}
-		},
-		DeleteFunc: func(obj interface{}) {
-			// DeletionHandlingMetaNamsespaceKeyFunc is a helper function that allows
-			// us to check the DeletedFinalStateUnknown existence in the event that
-			// a resource was deleted but it is still contained in the index
-			//
-			// this then in turn calls MetaNamespaceKeyFunc
-			key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
-			log.Infof(" === DELETE === fimwatch: %s", key)
-			if err == nil {
-				queue.Add(key)
-			}
-		},
-	})
-
-	// construct the Controller object which has all of the necessary components to
-	// handle logging, connections, informing (listing and watching), the queue,
-	// and the handler
-	controller := Controller{
-		logger:    log.NewEntry(log.New()),
-		clientset: client,
-		informer:  informer,
-		queue:     queue,
-		handler:   &TestHandler{},
+	cfg, err := clientcmd.BuildConfigFromFlags(masterURL, kubeconfig)
+	if err != nil {
+		glog.Fatalf("Error building kubeconfig: %s", err.Error())
 	}
 
-	// use a channel to synchronize the finalization for a graceful shutdown
-	stopCh := make(chan struct{})
-	defer close(stopCh)
+	kubeClient, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		glog.Fatalf("Error building kubernetes clientset: %s", err.Error())
+	}
 
-	// run the controller loop to process items
-	go controller.Run(stopCh)
+	exampleClient, err := clientset.NewForConfig(cfg)
+	if err != nil {
+		glog.Fatalf("Error building example clientset: %s", err.Error())
+	}
 
-	// use a channel to handle OS signals to terminate and gracefully shut
-	// down processing
-	sigTerm := make(chan os.Signal, 1)
-	signal.Notify(sigTerm, syscall.SIGTERM)
-	signal.Notify(sigTerm, syscall.SIGINT)
-	<-sigTerm
+	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(kubeClient, time.Second*30)
+	exampleInformerFactory := informers.NewSharedInformerFactory(exampleClient, time.Second*30)
+
+	controller := NewController(kubeClient, exampleClient,
+		kubeInformerFactory.Apps().V1().Deployments(),
+		exampleInformerFactory.Fimcontroller().V1alpha1().Foos())
+
+	go kubeInformerFactory.Start(stopCh)
+	go exampleInformerFactory.Start(stopCh)
+
+	if err = controller.Run(2, stopCh); err != nil {
+		glog.Fatalf("Error running controller: %s", err.Error())
+	}
+}
+
+func init() {
+	flag.StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig. Only required if out-of-cluster.")
+	flag.StringVar(&masterURL, "master", "", "The address of the Kubernetes API server. Overrides any value in kubeconfig. Only required if out-of-cluster.")
 }
