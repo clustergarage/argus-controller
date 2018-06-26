@@ -1,6 +1,7 @@
-apiVersion: fim.clustergarage.io/v1alpha1
-kind: FimWatch
+apiVersion: fimcontroller.clustergarage.io/v1alpha1
+kind: FimWatcher
 metadata:
-  name: example-fim-watch
+  name: example-fim-watcher
 spec:
-  message: Hello, world!
+  deploymentName: example-foo
+  replicas: 1

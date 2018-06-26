@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"time"
 
-	"github.com/golang/glog"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -79,9 +79,9 @@ func NewController(
 	// Add fimcontroller types to the default Kubernetes Scheme so Events can be
 	// logged for fimcontroller types.
 	fimscheme.AddToScheme(scheme.Scheme)
-	glog.V(4).Info("Creating event broadcaster")
+	log.Println("Creating event broadcaster")
 	eventBroadcaster := record.NewBroadcaster()
-	eventBroadcaster.StartLogging(glog.Infof)
+	eventBroadcaster.StartLogging(log.Printf)
 	eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: kubeclientset.CoreV1().Events("")})
 	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: controllerAgentName})
 
@@ -96,7 +96,7 @@ func NewController(
 		recorder:          recorder,
 	}
 
-	glog.Info("Setting up event handlers")
+	log.Println("Setting up event handlers")
 	// Set up an event handler for when FimWatcher resources change
 	fimWatcherInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: controller.enqueueFimWatcher,
@@ -137,23 +137,23 @@ func (c *Controller) Run(threadiness int, stopCh <-chan struct{}) error {
 	defer c.workqueue.ShutDown()
 
 	// Start the informer factories to begin populating the informer caches
-	glog.Info("Starting FimWatcher controller")
+	log.Println("Starting FimWatcher controller")
 
 	// Wait for the caches to be synced before starting workers
-	glog.Info("Waiting for informer caches to sync")
+	log.Println("Waiting for informer caches to sync")
 	if ok := cache.WaitForCacheSync(stopCh, c.deploymentsSynced, c.fimWatchersSynced); !ok {
 		return fmt.Errorf("failed to wait for caches to sync")
 	}
 
-	glog.Info("Starting workers")
+	log.Println("Starting workers")
 	// Launch two workers to process FimWatcher resources
 	for i := 0; i < threadiness; i++ {
 		go wait.Until(c.runWorker, time.Second, stopCh)
 	}
 
-	glog.Info("Started workers")
+	log.Println("Started workers")
 	<-stopCh
-	glog.Info("Shutting down workers")
+	log.Println("Shutting down workers")
 
 	return nil
 }
@@ -207,7 +207,7 @@ func (c *Controller) processNextWorkItem() bool {
 		// Finally, if no error occurs we Forget this item so it does not
 		// get queued again until another change happens.
 		c.workqueue.Forget(obj)
-		glog.Infof("Successfully synced '%s'", key)
+		log.Printf("Successfully synced '%s'", key)
 		return nil
 	}(obj)
 
@@ -277,7 +277,7 @@ func (c *Controller) syncHandler(key string) error {
 	// number does not equal the current desired replicas on the Deployment, we
 	// should update the Deployment resource.
 	if fimWatcher.Spec.Replicas != nil && *fimWatcher.Spec.Replicas != *deployment.Spec.Replicas {
-		glog.V(4).Infof("FimWatcher %s replicas: %d, deployment replicas: %d", name, *fimWatcher.Spec.Replicas, *deployment.Spec.Replicas)
+		log.Printf("FimWatcher %s replicas: %d, deployment replicas: %d", name, *fimWatcher.Spec.Replicas, *deployment.Spec.Replicas)
 		deployment, err = c.kubeclientset.AppsV1().Deployments(fimWatcher.Namespace).Update(newDeployment(fimWatcher))
 	}
 
@@ -345,9 +345,9 @@ func (c *Controller) handleObject(obj interface{}) {
 			runtime.HandleError(fmt.Errorf("error decoding object tombstone, invalid type"))
 			return
 		}
-		glog.V(4).Infof("Recovered deleted object '%s' from tombstone", object.GetName())
+		log.Printf("Recovered deleted object '%s' from tombstone", object.GetName())
 	}
-	glog.V(4).Infof("Processing object: %s", object.GetName())
+	log.Printf("Processing object: %s", object.GetName())
 	if ownerRef := metav1.GetControllerOf(object); ownerRef != nil {
 		// If this object is not owned by a FimWatcher, we should not do anything more
 		// with it.
@@ -357,7 +357,7 @@ func (c *Controller) handleObject(obj interface{}) {
 
 		fimWatcher, err := c.fimWatchersLister.FimWatchers(object.GetNamespace()).Get(ownerRef.Name)
 		if err != nil {
-			glog.V(4).Infof("ignoring orphaned object '%s' of fimWatcher '%s'", object.GetSelfLink(), ownerRef.Name)
+			log.Printf("ignoring orphaned object '%s' of fimWatcher '%s'", object.GetSelfLink(), ownerRef.Name)
 			return
 		}
 
