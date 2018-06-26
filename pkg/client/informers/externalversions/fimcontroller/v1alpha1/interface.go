@@ -8,8 +8,8 @@ import (
 
 // Interface provides access to all the informers in this group version.
 type Interface interface {
-	// FimListeners returns a FimListenerInformer.
-	FimListeners() FimListenerInformer
+	// FimWatchers returns a FimWatcherInformer.
+	FimWatchers() FimWatcherInformer
 }
 
 type version struct {
@@ -23,7 +23,7 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 	return &version{factory: f, namespace: namespace, tweakListOptions: tweakListOptions}
 }
 
-// FimListeners returns a FimListenerInformer.
-func (v *version) FimListeners() FimListenerInformer {
-	return &fimListenerInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+// FimWatchers returns a FimWatcherInformer.
+func (v *version) FimWatchers() FimWatcherInformer {
+	return &fimWatcherInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }

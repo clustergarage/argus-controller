@@ -7,32 +7,32 @@ import (
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-// FimListener is a specification for a FimListener resource
-type FimListener struct {
+// FimWatcher is a specification for a FimWatcher resource
+type FimWatcher struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   FimListenerSpec   `json:"spec"`
-	Status FimListenerStatus `json:"status"`
+	Spec   FimWatcherSpec   `json:"spec"`
+	Status FimWatcherStatus `json:"status"`
 }
 
-// FimListenerSpec is the spec for a FimListener resource
-type FimListenerSpec struct {
+// FimWatcherSpec is the spec for a FimWatcher resource
+type FimWatcherSpec struct {
 	DeploymentName string `json:"deploymentName"`
 	Replicas       *int32 `json:"replicas"`
 }
 
-// FimListenerStatus is the status for a FimListener resource
-type FimListenerStatus struct {
+// FimWatcherStatus is the status for a FimWatcher resource
+type FimWatcherStatus struct {
 	AvailableReplicas int32 `json:"availableReplicas"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-// FimListenerList is a list of FimListener resources
-type FimListenerList struct {
+// FimWatcherList is a list of FimWatcher resources
+type FimWatcherList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata"`
 
-	Items []FimListener `json:"items"`
+	Items []FimWatcher `json:"items"`
 }

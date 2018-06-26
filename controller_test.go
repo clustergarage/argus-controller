@@ -33,8 +33,8 @@ type fixture struct {
 	client     *fake.Clientset
 	kubeclient *k8sfake.Clientset
 	// Objects to put in the store.
-	fimListenerLister []*fimcontroller.FimListener
-	deploymentLister  []*apps.Deployment
+	fimWatcherLister []*fimcontroller.FimWatcher
+	deploymentLister []*apps.Deployment
 	// Actions expected to happen on the client.
 	kubeactions []core.Action
 	actions     []core.Action
@@ -51,14 +51,14 @@ func newFixture(t *testing.T) *fixture {
 	return f
 }
 
-func newFimListener(name string, replicas *int32) *fimcontroller.FimListener {
-	return &fimcontroller.FimListener{
+func newFimWatcher(name string, replicas *int32) *fimcontroller.FimWatcher {
+	return &fimcontroller.FimWatcher{
 		TypeMeta: metav1.TypeMeta{APIVersion: fimcontroller.SchemeGroupVersion.String()},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: metav1.NamespaceDefault,
 		},
-		Spec: fimcontroller.FimListenerSpec{
+		Spec: fimcontroller.FimWatcherSpec{
 			DeploymentName: fmt.Sprintf("%s-deployment", name),
 			Replicas:       replicas,
 		},
@@ -72,14 +72,14 @@ func (f *fixture) newController() (*Controller, informers.SharedInformerFactory,
 	i := informers.NewSharedInformerFactory(f.client, noResyncPeriodFunc())
 	k8sI := kubeinformers.NewSharedInformerFactory(f.kubeclient, noResyncPeriodFunc())
 
-	c := NewController(f.kubeclient, f.client, k8sI.Apps().V1().Deployments(), i.Fimcontroller().V1alpha1().FimListeners())
+	c := NewController(f.kubeclient, f.client, k8sI.Apps().V1().Deployments(), i.Fimcontroller().V1alpha1().FimWatchers())
 
-	c.fimListenersSynced = alwaysReady
+	c.fimWatchersSynced = alwaysReady
 	c.deploymentsSynced = alwaysReady
 	c.recorder = &record.FakeRecorder{}
 
-	for _, f := range f.fimListenerLister {
-		i.Fimcontroller().V1alpha1().FimListeners().Informer().GetIndexer().Add(f)
+	for _, f := range f.fimWatcherLister {
+		i.Fimcontroller().V1alpha1().FimWatchers().Informer().GetIndexer().Add(f)
 	}
 
 	for _, d := range f.deploymentLister {
@@ -89,15 +89,15 @@ func (f *fixture) newController() (*Controller, informers.SharedInformerFactory,
 	return c, i, k8sI
 }
 
-func (f *fixture) run(fimListenerName string) {
-	f.runController(fimListenerName, true, false)
+func (f *fixture) run(fimWatcherName string) {
+	f.runController(fimWatcherName, true, false)
 }
 
-func (f *fixture) runExpectError(fimListenerName string) {
-	f.runController(fimListenerName, true, true)
+func (f *fixture) runExpectError(fimWatcherName string) {
+	f.runController(fimWatcherName, true, true)
 }
 
-func (f *fixture) runController(fimListenerName string, startInformers bool, expectError bool) {
+func (f *fixture) runController(fimWatcherName string, startInformers bool, expectError bool) {
 	c, i, k8sI := f.newController()
 	if startInformers {
 		stopCh := make(chan struct{})
@@ -106,11 +106,11 @@ func (f *fixture) runController(fimListenerName string, startInformers bool, exp
 		k8sI.Start(stopCh)
 	}
 
-	err := c.syncHandler(fimListenerName)
+	err := c.syncHandler(fimWatcherName)
 	if !expectError && err != nil {
-		f.t.Errorf("error syncing fimListener: %v", err)
+		f.t.Errorf("error syncing fimWatcher: %v", err)
 	} else if expectError && err == nil {
-		f.t.Error("expected error syncing fimListener, got nil")
+		f.t.Error("expected error syncing fimWatcher, got nil")
 	}
 
 	actions := filterInformerActions(f.client.Actions())
@@ -195,8 +195,8 @@ func filterInformerActions(actions []core.Action) []core.Action {
 	ret := []core.Action{}
 	for _, action := range actions {
 		if len(action.GetNamespace()) == 0 &&
-			(action.Matches("list", "fimListeners") ||
-				action.Matches("watch", "fimListeners") ||
+			(action.Matches("list", "fimWatchers") ||
+				action.Matches("watch", "fimWatchers") ||
 				action.Matches("list", "deployments") ||
 				action.Matches("watch", "deployments")) {
 			continue
@@ -215,16 +215,16 @@ func (f *fixture) expectUpdateDeploymentAction(d *apps.Deployment) {
 	f.kubeactions = append(f.kubeactions, core.NewUpdateAction(schema.GroupVersionResource{Resource: "deployments"}, d.Namespace, d))
 }
 
-func (f *fixture) expectUpdateFimListenerStatusAction(fimListener *fimcontroller.FimListener) {
-	action := core.NewUpdateAction(schema.GroupVersionResource{Resource: "fimListeners"}, fimListener.Namespace, fimListener)
+func (f *fixture) expectUpdateFimWatcherStatusAction(fimWatcher *fimcontroller.FimWatcher) {
+	action := core.NewUpdateAction(schema.GroupVersionResource{Resource: "fimWatchers"}, fimWatcher.Namespace, fimWatcher)
 	//action.Subresource = "status"
 	f.actions = append(f.actions, action)
 }
 
-func getKey(fimListener *fimcontroller.FimListener, t *testing.T) string {
-	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(fimListener)
+func getKey(fimWatcher *fimcontroller.FimWatcher, t *testing.T) string {
+	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(fimWatcher)
 	if err != nil {
-		t.Errorf("Unexpected error getting key for fimListener %v: %v", fimListener.Name, err)
+		t.Errorf("Unexpected error getting key for fimWatcher %v: %v", fimWatcher.Name, err)
 		return ""
 	}
 	return key
@@ -232,64 +232,64 @@ func getKey(fimListener *fimcontroller.FimListener, t *testing.T) string {
 
 func TestCreatesDeployment(t *testing.T) {
 	f := newFixture(t)
-	fimListener := newFimListener("test", int32Ptr(1))
+	fimWatcher := newFimWatcher("test", int32Ptr(1))
 
-	f.fimListenerLister = append(f.fimListenerLister, fimListener)
-	f.objects = append(f.objects, fimListener)
+	f.fimWatcherLister = append(f.fimWatcherLister, fimWatcher)
+	f.objects = append(f.objects, fimWatcher)
 
-	expDeployment := newDeployment(fimListener)
+	expDeployment := newDeployment(fimWatcher)
 	f.expectCreateDeploymentAction(expDeployment)
-	f.expectUpdateFimListenerStatusAction(fimListener)
+	f.expectUpdateFimWatcherStatusAction(fimWatcher)
 
-	f.run(getKey(fimListener, t))
+	f.run(getKey(fimWatcher, t))
 }
 
 func TestDoNothing(t *testing.T) {
 	f := newFixture(t)
-	fimListener := newFimListener("test", int32Ptr(1))
-	d := newDeployment(fimListener)
+	fimWatcher := newFimWatcher("test", int32Ptr(1))
+	d := newDeployment(fimWatcher)
 
-	f.fimListenerLister = append(f.fimListenerLister, fimListener)
-	f.objects = append(f.objects, fimListener)
+	f.fimWatcherLister = append(f.fimWatcherLister, fimWatcher)
+	f.objects = append(f.objects, fimWatcher)
 	f.deploymentLister = append(f.deploymentLister, d)
 	f.kubeobjects = append(f.kubeobjects, d)
 
-	f.expectUpdateFimListenerStatusAction(fimListener)
-	f.run(getKey(fimListener, t))
+	f.expectUpdateFimWatcherStatusAction(fimWatcher)
+	f.run(getKey(fimWatcher, t))
 }
 
 func TestUpdateDeployment(t *testing.T) {
 	f := newFixture(t)
-	fimListener := newFimListener("test", int32Ptr(1))
-	d := newDeployment(fimListener)
+	fimWatcher := newFimWatcher("test", int32Ptr(1))
+	d := newDeployment(fimWatcher)
 
 	// Update replicas
-	fimListener.Spec.Replicas = int32Ptr(2)
-	expDeployment := newDeployment(fimListener)
+	fimWatcher.Spec.Replicas = int32Ptr(2)
+	expDeployment := newDeployment(fimWatcher)
 
-	f.fimListenerLister = append(f.fimListenerLister, fimListener)
-	f.objects = append(f.objects, fimListener)
+	f.fimWatcherLister = append(f.fimWatcherLister, fimWatcher)
+	f.objects = append(f.objects, fimWatcher)
 	f.deploymentLister = append(f.deploymentLister, d)
 	f.kubeobjects = append(f.kubeobjects, d)
 
-	f.expectUpdateFimListenerStatusAction(fimListener)
+	f.expectUpdateFimWatcherStatusAction(fimWatcher)
 	f.expectUpdateDeploymentAction(expDeployment)
-	f.run(getKey(fimListener, t))
+	f.run(getKey(fimWatcher, t))
 }
 
 func TestNotControlledByUs(t *testing.T) {
 	f := newFixture(t)
-	fimListener := newFimListener("test", int32Ptr(1))
-	d := newDeployment(fimListener)
+	fimWatcher := newFimWatcher("test", int32Ptr(1))
+	d := newDeployment(fimWatcher)
 
 	d.ObjectMeta.OwnerReferences = []metav1.OwnerReference{}
 
-	f.fimListenerLister = append(f.fimListenerLister, fimListener)
-	f.objects = append(f.objects, fimListener)
+	f.fimWatcherLister = append(f.fimWatcherLister, fimWatcher)
+	f.objects = append(f.objects, fimWatcher)
 	f.deploymentLister = append(f.deploymentLister, d)
 	f.kubeobjects = append(f.kubeobjects, d)
 
-	f.runExpectError(getKey(fimListener, t))
+	f.runExpectError(getKey(fimWatcher, t))
 }
 
 func int32Ptr(i int32) *int32 { return &i }

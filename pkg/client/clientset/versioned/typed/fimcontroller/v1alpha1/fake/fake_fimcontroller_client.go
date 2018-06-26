@@ -12,8 +12,8 @@ type FakeFimcontrollerV1alpha1 struct {
 	*testing.Fake
 }
 
-func (c *FakeFimcontrollerV1alpha1) FimListeners(namespace string) v1alpha1.FimListenerInterface {
-	return &FakeFimListeners{c, namespace}
+func (c *FakeFimcontrollerV1alpha1) FimWatchers(namespace string) v1alpha1.FimWatcherInterface {
+	return &FakeFimWatchers{c, namespace}
 }
 
 // RESTClient returns a RESTClient that is used to communicate

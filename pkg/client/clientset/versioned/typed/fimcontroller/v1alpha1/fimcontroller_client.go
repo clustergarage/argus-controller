@@ -11,7 +11,7 @@ import (
 
 type FimcontrollerV1alpha1Interface interface {
 	RESTClient() rest.Interface
-	FimListenersGetter
+	FimWatchersGetter
 }
 
 // FimcontrollerV1alpha1Client is used to interact with features provided by the fimcontroller.clustergarage.io group.
@@ -19,8 +19,8 @@ type FimcontrollerV1alpha1Client struct {
 	restClient rest.Interface
 }
 
-func (c *FimcontrollerV1alpha1Client) FimListeners(namespace string) FimListenerInterface {
-	return newFimListeners(c, namespace)
+func (c *FimcontrollerV1alpha1Client) FimWatchers(namespace string) FimWatcherInterface {
+	return newFimWatchers(c, namespace)
 }
 
 // NewForConfig creates a new FimcontrollerV1alpha1Client for the given config.
