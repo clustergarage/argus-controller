@@ -21,14 +21,14 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 
-	fimv1alpha1 "github.com/clustergarage/fim-k8s/pkg/apis/fimcontroller/v1alpha1"
-	clientset "github.com/clustergarage/fim-k8s/pkg/client/clientset/versioned"
-	fimscheme "github.com/clustergarage/fim-k8s/pkg/client/clientset/versioned/scheme"
-	informers "github.com/clustergarage/fim-k8s/pkg/client/informers/externalversions/fimcontroller/v1alpha1"
-	listers "github.com/clustergarage/fim-k8s/pkg/client/listers/fimcontroller/v1alpha1"
+	fimv1alpha1 "clustergarage.io/fim-k8s/pkg/apis/fimcontroller/v1alpha1"
+	clientset "clustergarage.io/fim-k8s/pkg/client/clientset/versioned"
+	fimscheme "clustergarage.io/fim-k8s/pkg/client/clientset/versioned/scheme"
+	informers "clustergarage.io/fim-k8s/pkg/client/informers/externalversions/fimcontroller/v1alpha1"
+	listers "clustergarage.io/fim-k8s/pkg/client/listers/fimcontroller/v1alpha1"
 )
 
-const controllerAgentName = "fim-controller"
+const controllerAgentName = "fimcontroller"
 
 const (
 	// SuccessSynced is used as part of the Event 'reason' when a FimWatch is synced
@@ -54,8 +54,8 @@ type Controller struct {
 
 	deploymentsLister appslisters.DeploymentLister
 	deploymentsSynced cache.InformerSynced
-	fimWatchesLister  listers.FimWatchLister
-	fimWatchesSynced  cache.InformerSynced
+	fimwatchesLister  listers.FimWatchLister
+	fimwatchesSynced  cache.InformerSynced
 
 	// workqueue is a rate limited work queue. This is used to queue work to be
 	// processed instead of performing it as soon as a change happens. This
@@ -73,11 +73,11 @@ func NewController(
 	kubeclientset kubernetes.Interface,
 	fimclientset clientset.Interface,
 	deploymentInformer appsinformers.DeploymentInformer,
-	fimWatchInformer informers.FimWatchInformer) *Controller {
+	fimwatchInformer informers.FimWatchInformer) *Controller {
 
 	// Create event broadcaster
-	// Add fim-controller types to the default Kubernetes Scheme so Events can be
-	// logged for fim-controller types.
+	// Add fimcontroller types to the default Kubernetes Scheme so Events can be
+	// logged for fimcontroller types.
 	fimscheme.AddToScheme(scheme.Scheme)
 	glog.V(4).Info("Creating event broadcaster")
 	eventBroadcaster := record.NewBroadcaster()
@@ -90,15 +90,15 @@ func NewController(
 		fimclientset:      fimclientset,
 		deploymentsLister: deploymentInformer.Lister(),
 		deploymentsSynced: deploymentInformer.Informer().HasSynced,
-		fimWatchesLister:  fimWatchInformer.Lister(),
-		fimWatchesSynced:  fimWatchInformer.Informer().HasSynced,
+		fimwatchesLister:  fimwatchInformer.Lister(),
+		fimwatchesSynced:  fimwatchInformer.Informer().HasSynced,
 		workqueue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "FimWatches"),
 		recorder:          recorder,
 	}
 
 	glog.Info("Setting up event handlers")
 	// Set up an event handler for when FimWatch resources change
-	fimWatchInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	fimwatchInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: controller.enqueueFimWatch,
 		UpdateFunc: func(old, new interface{}) {
 			controller.enqueueFimWatch(new)
@@ -141,7 +141,7 @@ func (c *Controller) Run(threadiness int, stopCh <-chan struct{}) error {
 
 	// Wait for the caches to be synced before starting workers
 	glog.Info("Waiting for informer caches to sync")
-	if ok := cache.WaitForCacheSync(stopCh, c.deploymentsSynced, c.fimWatchesSynced); !ok {
+	if ok := cache.WaitForCacheSync(stopCh, c.deploymentsSynced, c.fimwatchesSynced); !ok {
 		return fmt.Errorf("failed to wait for caches to sync")
 	}
 
@@ -231,19 +231,18 @@ func (c *Controller) syncHandler(key string) error {
 	}
 
 	// Get the FimWatch resource with this namespace/name
-	fimWatch, err := c.fimWatchesLister.FimWatches(namespace).Get(name)
+	fimwatch, err := c.fimwatchesLister.FimWatches(namespace).Get(name)
 	if err != nil {
 		// The FimWatch resource may no longer exist, in which case we stop
 		// processing.
 		if errors.IsNotFound(err) {
-			runtime.HandleError(fmt.Errorf("fimWatch '%s' in work queue no longer exists", key))
+			runtime.HandleError(fmt.Errorf("fimwatch '%s' in work queue no longer exists", key))
 			return nil
 		}
-
 		return err
 	}
 
-	deploymentName := fimWatch.Spec.DeploymentName
+	deploymentName := fimwatch.Spec.DeploymentName
 	if deploymentName == "" {
 		// We choose to absorb the error here as the worker would requeue the
 		// resource otherwise. Instead, the next time the resource is updated
@@ -253,10 +252,10 @@ func (c *Controller) syncHandler(key string) error {
 	}
 
 	// Get the deployment with the name specified in FimWatch.spec
-	deployment, err := c.deploymentsLister.Deployments(fimWatch.Namespace).Get(deploymentName)
+	deployment, err := c.deploymentsLister.Deployments(fimwatch.Namespace).Get(deploymentName)
 	// If the resource doesn't exist, we'll create it
 	if errors.IsNotFound(err) {
-		deployment, err = c.kubeclientset.AppsV1().Deployments(fimWatch.Namespace).Create(newDeployment(fimWatch))
+		deployment, err = c.kubeclientset.AppsV1().Deployments(fimwatch.Namespace).Create(newDeployment(fimwatch))
 	}
 
 	// If an error occurs during Get/Create, we'll requeue the item so we can
@@ -268,18 +267,18 @@ func (c *Controller) syncHandler(key string) error {
 
 	// If the Deployment is not controlled by this FimWatch resource, we should log
 	// a warning to the event recorder and ret
-	if !metav1.IsControlledBy(deployment, fimWatch) {
+	if !metav1.IsControlledBy(deployment, fimwatch) {
 		msg := fmt.Sprintf(MessageResourceExists, deployment.Name)
-		c.recorder.Event(fimWatch, corev1.EventTypeWarning, ErrResourceExists, msg)
+		c.recorder.Event(fimwatch, corev1.EventTypeWarning, ErrResourceExists, msg)
 		return fmt.Errorf(msg)
 	}
 
 	// If this number of the replicas on the FimWatch resource is specified, and the
 	// number does not equal the current desired replicas on the Deployment, we
 	// should update the Deployment resource.
-	if fimWatch.Spec.Replicas != nil && *fimWatch.Spec.Replicas != *deployment.Spec.Replicas {
-		glog.V(4).Infof("FimWatch %s replicas: %d, deployment replicas: %d", name, *fimWatch.Spec.Replicas, *deployment.Spec.Replicas)
-		deployment, err = c.kubeclientset.AppsV1().Deployments(fimWatch.Namespace).Update(newDeployment(fimWatch))
+	if fimwatch.Spec.Replicas != nil && *fimwatch.Spec.Replicas != *deployment.Spec.Replicas {
+		glog.V(4).Infof("FimWatch %s replicas: %d, deployment replicas: %d", name, *fimwatch.Spec.Replicas, *deployment.Spec.Replicas)
+		deployment, err = c.kubeclientset.AppsV1().Deployments(fimwatch.Namespace).Update(newDeployment(fimwatch))
 	}
 
 	// If an error occurs during Update, we'll requeue the item so we can
@@ -291,26 +290,26 @@ func (c *Controller) syncHandler(key string) error {
 
 	// Finally, we update the status block of the FimWatch resource to reflect the
 	// current state of the world
-	err = c.updateFimWatchStatus(fimWatch, deployment)
+	err = c.updateFimWatchStatus(fimwatch, deployment)
 	if err != nil {
 		return err
 	}
 
-	c.recorder.Event(fimWatch, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
+	c.recorder.Event(fimwatch, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
 	return nil
 }
 
-func (c *Controller) updateFimWatchStatus(fimWatch *fimv1alpha1.FimWatch, deployment *appsv1.Deployment) error {
+func (c *Controller) updateFimWatchStatus(fimwatch *fimv1alpha1.FimWatch, deployment *appsv1.Deployment) error {
 	// NEVER modify objects from the store. It's a read-only, local cache.
 	// You can use DeepCopy() to make a deep copy of original object and modify this copy
 	// Or create a copy manually for better performance
-	fimWatchCopy := fimWatch.DeepCopy()
-	fimWatchCopy.Status.AvailableReplicas = deployment.Status.AvailableReplicas
+	fimwatchCopy := fimwatch.DeepCopy()
+	fimwatchCopy.Status.AvailableReplicas = deployment.Status.AvailableReplicas
 	// If the CustomResourceSubresources feature gate is not enabled,
 	// we must use Update instead of UpdateStatus to update the Status block of the FimWatch resource.
 	// UpdateStatus will not allow changes to the Spec of the resource,
 	// which is ideal for ensuring nothing other than resource status has been updated.
-	_, err := c.fimclientset.FimcontrollerV1alpha1().FimWatches(fimWatch.Namespace).Update(fimWatchCopy)
+	_, err := c.fimclientset.FimcontrollerV1alpha1().FimWatches(fimwatch.Namespace).Update(fimwatchCopy)
 	return err
 }
 
@@ -356,13 +355,13 @@ func (c *Controller) handleObject(obj interface{}) {
 			return
 		}
 
-		fimWatch, err := c.fimWatchesLister.FimWatches(object.GetNamespace()).Get(ownerRef.Name)
+		fimwatch, err := c.fimwatchesLister.FimWatches(object.GetNamespace()).Get(ownerRef.Name)
 		if err != nil {
-			glog.V(4).Infof("ignoring orphaned object '%s' of fimWatch '%s'", object.GetSelfLink(), ownerRef.Name)
+			glog.V(4).Infof("ignoring orphaned object '%s' of fimwatch '%s'", object.GetSelfLink(), ownerRef.Name)
 			return
 		}
 
-		c.enqueueFimWatch(fimWatch)
+		c.enqueueFimWatch(fimwatch)
 		return
 	}
 }
@@ -370,17 +369,17 @@ func (c *Controller) handleObject(obj interface{}) {
 // newDeployment creates a new Deployment for a FimWatch resource. It also sets
 // the appropriate OwnerReferences on the resource so handleObject can discover
 // the FimWatch resource that 'owns' it.
-func newDeployment(fimWatch *fimv1alpha1.FimWatch) *appsv1.Deployment {
+func newDeployment(fimwatch *fimv1alpha1.FimWatch) *appsv1.Deployment {
 	labels := map[string]string{
 		"app":        "nginx",
-		"controller": fimWatch.Name,
+		"controller": fimwatch.Name,
 	}
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fimWatch.Spec.DeploymentName,
-			Namespace: fimWatch.Namespace,
+			Name:      fimwatch.Spec.DeploymentName,
+			Namespace: fimwatch.Namespace,
 			OwnerReferences: []metav1.OwnerReference{
-				*metav1.NewControllerRef(fimWatch, schema.GroupVersionKind{
+				*metav1.NewControllerRef(fimwatch, schema.GroupVersionKind{
 					Group:   fimv1alpha1.SchemeGroupVersion.Group,
 					Version: fimv1alpha1.SchemeGroupVersion.Version,
 					Kind:    "FimWatch",
@@ -388,7 +387,7 @@ func newDeployment(fimWatch *fimv1alpha1.FimWatch) *appsv1.Deployment {
 			},
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: fimWatch.Spec.Replicas,
+			Replicas: fimwatch.Spec.Replicas,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: labels,
 			},

@@ -5,7 +5,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	fimcontroller "github.com/clustergarage/fim-k8s/pkg/apis/fimcontroller"
+	fimcontroller "clustergarage.io/fim-k8s/pkg/apis/fimcontroller"
 )
 
 // SchemeGroupVersion is group version used to register these objects

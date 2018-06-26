@@ -3,7 +3,9 @@
 package fake
 
 import (
-	v1alpha1 "github.com/clustergarage/fim-k8s/pkg/apis/fimcontroller/v1alpha1"
+	"fmt"
+
+	v1alpha1 "clustergarage.io/fim-k8s/pkg/apis/fimcontroller/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	labels "k8s.io/apimachinery/pkg/labels"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
@@ -24,6 +26,9 @@ var fimwatchesKind = schema.GroupVersionKind{Group: "fimcontroller.clustergarage
 
 // Get takes name of the fimWatch, and returns the corresponding fimWatch object, and an error if there is any.
 func (c *FakeFimWatches) Get(name string, options v1.GetOptions) (result *v1alpha1.FimWatch, err error) {
+	fmt.Println("GET")
+	fmt.Println(name)
+	fmt.Println(options)
 	obj, err := c.Fake.
 		Invokes(testing.NewGetAction(fimwatchesResource, c.ns, name), &v1alpha1.FimWatch{})
 
@@ -35,6 +40,8 @@ func (c *FakeFimWatches) Get(name string, options v1.GetOptions) (result *v1alph
 
 // List takes label and field selectors, and returns the list of FimWatches that match those selectors.
 func (c *FakeFimWatches) List(opts v1.ListOptions) (result *v1alpha1.FimWatchList, err error) {
+	fmt.Println("LIST")
+	fmt.Println(opts)
 	obj, err := c.Fake.
 		Invokes(testing.NewListAction(fimwatchesResource, fimwatchesKind, c.ns, opts), &v1alpha1.FimWatchList{})
 
@@ -57,6 +64,8 @@ func (c *FakeFimWatches) List(opts v1.ListOptions) (result *v1alpha1.FimWatchLis
 
 // Watch returns a watch.Interface that watches the requested fimWatches.
 func (c *FakeFimWatches) Watch(opts v1.ListOptions) (watch.Interface, error) {
+	fmt.Println("WATCH")
+	fmt.Println(opts)
 	return c.Fake.
 		InvokesWatch(testing.NewWatchAction(fimwatchesResource, c.ns, opts))
 
@@ -64,6 +73,8 @@ func (c *FakeFimWatches) Watch(opts v1.ListOptions) (watch.Interface, error) {
 
 // Create takes the representation of a fimWatch and creates it.  Returns the server's representation of the fimWatch, and an error, if there is any.
 func (c *FakeFimWatches) Create(fimWatch *v1alpha1.FimWatch) (result *v1alpha1.FimWatch, err error) {
+	fmt.Println("CREATE")
+	fmt.Println(fimWatch)
 	obj, err := c.Fake.
 		Invokes(testing.NewCreateAction(fimwatchesResource, c.ns, fimWatch), &v1alpha1.FimWatch{})
 
@@ -75,6 +86,8 @@ func (c *FakeFimWatches) Create(fimWatch *v1alpha1.FimWatch) (result *v1alpha1.F
 
 // Update takes the representation of a fimWatch and updates it. Returns the server's representation of the fimWatch, and an error, if there is any.
 func (c *FakeFimWatches) Update(fimWatch *v1alpha1.FimWatch) (result *v1alpha1.FimWatch, err error) {
+	fmt.Println("UPDATE")
+	fmt.Println(fimWatch)
 	obj, err := c.Fake.
 		Invokes(testing.NewUpdateAction(fimwatchesResource, c.ns, fimWatch), &v1alpha1.FimWatch{})
 
@@ -87,6 +100,8 @@ func (c *FakeFimWatches) Update(fimWatch *v1alpha1.FimWatch) (result *v1alpha1.F
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
 func (c *FakeFimWatches) UpdateStatus(fimWatch *v1alpha1.FimWatch) (*v1alpha1.FimWatch, error) {
+	fmt.Println("UPDATESTATUS")
+	fmt.Println(fimWatch)
 	obj, err := c.Fake.
 		Invokes(testing.NewUpdateSubresourceAction(fimwatchesResource, "status", c.ns, fimWatch), &v1alpha1.FimWatch{})
 
@@ -98,6 +113,9 @@ func (c *FakeFimWatches) UpdateStatus(fimWatch *v1alpha1.FimWatch) (*v1alpha1.Fi
 
 // Delete takes name of the fimWatch and deletes it. Returns an error if one occurs.
 func (c *FakeFimWatches) Delete(name string, options *v1.DeleteOptions) error {
+	fmt.Println("DELETE")
+	fmt.Println(name)
+	fmt.Println(options)
 	_, err := c.Fake.
 		Invokes(testing.NewDeleteAction(fimwatchesResource, c.ns, name), &v1alpha1.FimWatch{})
 

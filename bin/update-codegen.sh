@@ -2,7 +2,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-ROOT_PACKAGE="github.com/clustergarage/fim-k8s"
+ROOT_PACKAGE="clustergarage.io/fim-k8s"
 SCRIPT_ROOT=$(dirname ${BASH_SOURCE})/..
 CODEGEN_PKG=${CODEGEN_PKG:-$(cd ${SCRIPT_ROOT}; ls -d -1 ./vendor/k8s.io/code-generator 2>/dev/null || echo ../code-generator)}
 

@@ -7,9 +7,9 @@ import (
 	sync "sync"
 	time "time"
 
-	versioned "github.com/clustergarage/fim-k8s/pkg/client/clientset/versioned"
-	fimcontroller "github.com/clustergarage/fim-k8s/pkg/client/informers/externalversions/fimcontroller"
-	internalinterfaces "github.com/clustergarage/fim-k8s/pkg/client/informers/externalversions/internalinterfaces"
+	versioned "clustergarage.io/fim-k8s/pkg/client/clientset/versioned"
+	fimcontroller "clustergarage.io/fim-k8s/pkg/client/informers/externalversions/fimcontroller"
+	internalinterfaces "clustergarage.io/fim-k8s/pkg/client/informers/externalversions/internalinterfaces"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
