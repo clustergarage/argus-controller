@@ -13,5 +13,4 @@ CODEGEN_PKG=${CODEGEN_PKG:-$(cd ${SCRIPT_ROOT}; ls -d -1 ./vendor/k8s.io/code-ge
 ${CODEGEN_PKG}/generate-groups.sh "deepcopy,client,informer,lister" \
       $ROOT_PACKAGE/pkg/client $ROOT_PACKAGE/pkg/apis \
         fimcontroller:v1alpha1 \
-          --output-base "$(dirname ${BASH_SOURCE})/../../.." \
           --go-header-file ${SCRIPT_ROOT}/bin/boilerplate.go.txt

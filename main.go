@@ -45,7 +45,7 @@ func main() {
 
 	controller := NewController(kubeClient, exampleClient,
 		kubeInformerFactory.Apps().V1().Deployments(),
-		exampleInformerFactory.Fimcontroller().V1alpha1().Foos())
+		exampleInformerFactory.Fimcontroller().V1alpha1().FimWatches())
 
 	go kubeInformerFactory.Start(stopCh)
 	go exampleInformerFactory.Start(stopCh)
