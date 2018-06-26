@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package fim;
+
+service Fimlet {
+  rpc NewWatch(InotifyConfig) returns (WatchHandle) {}
+}
+
+message InotifyConfig {
+  int32 pid = 1;
+  string paths = 2;
+}
+
+message WatchHandle {
+  string uri = 1;
+}
