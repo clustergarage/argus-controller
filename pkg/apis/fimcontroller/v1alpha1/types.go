@@ -7,32 +7,32 @@ import (
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-// Fim is a specification for a Fim resource
-type FimWatch struct {
+// FimListener is a specification for a FimListener resource
+type FimListener struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   FimWatchSpec   `json:"spec"`
-	Status FimWatchStatus `json:"status"`
+	Spec   FimListenerSpec   `json:"spec"`
+	Status FimListenerStatus `json:"status"`
 }
 
-// FimSpec is the spec for a Fim resource
-type FimWatchSpec struct {
+// FimListenerSpec is the spec for a FimListener resource
+type FimListenerSpec struct {
 	DeploymentName string `json:"deploymentName"`
 	Replicas       *int32 `json:"replicas"`
 }
 
-// FimStatus is the status for a Fim resource
-type FimWatchStatus struct {
+// FimListenerStatus is the status for a FimListener resource
+type FimListenerStatus struct {
 	AvailableReplicas int32 `json:"availableReplicas"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-// FimList is a list of Fim resources
-type FimWatchList struct {
+// FimListenerList is a list of FimListener resources
+type FimListenerList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata"`
 
-	Items []FimWatch `json:"items"`
+	Items []FimListener `json:"items"`
 }

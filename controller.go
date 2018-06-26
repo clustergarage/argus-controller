@@ -31,31 +31,31 @@ import (
 const controllerAgentName = "fimcontroller"
 
 const (
-	// SuccessSynced is used as part of the Event 'reason' when a FimWatch is synced
+	// SuccessSynced is used as part of the Event 'reason' when a FimListener is synced
 	SuccessSynced = "Synced"
-	// ErrResourceExists is used as part of the Event 'reason' when a FimWatch fails
+	// ErrResourceExists is used as part of the Event 'reason' when a FimListener fails
 	// to sync due to a Deployment of the same name already existing.
 	ErrResourceExists = "ErrResourceExists"
 
 	// MessageResourceExists is the message used for Events when a resource
 	// fails to sync due to a Deployment already existing
-	MessageResourceExists = "Resource %q already exists and is not managed by FimWatch"
-	// MessageResourceSynced is the message used for an Event fired when a FimWatch
+	MessageResourceExists = "Resource %q already exists and is not managed by FimListener"
+	// MessageResourceSynced is the message used for an Event fired when a FimListener
 	// is synced successfully
-	MessageResourceSynced = "FimWatch synced successfully"
+	MessageResourceSynced = "FimListener synced successfully"
 )
 
-// Controller is the controller implementation for FimWatch resources
+// Controller is the controller implementation for FimListener resources
 type Controller struct {
 	// kubeclientset is a standard kubernetes clientset
 	kubeclientset kubernetes.Interface
 	// fimclientset is a clientset for our own API group
 	fimclientset clientset.Interface
 
-	deploymentsLister appslisters.DeploymentLister
-	deploymentsSynced cache.InformerSynced
-	fimwatchesLister  listers.FimWatchLister
-	fimwatchesSynced  cache.InformerSynced
+	deploymentsLister  appslisters.DeploymentLister
+	deploymentsSynced  cache.InformerSynced
+	fimListenersLister listers.FimListenerLister
+	fimListenersSynced cache.InformerSynced
 
 	// workqueue is a rate limited work queue. This is used to queue work to be
 	// processed instead of performing it as soon as a change happens. This
@@ -73,7 +73,7 @@ func NewController(
 	kubeclientset kubernetes.Interface,
 	fimclientset clientset.Interface,
 	deploymentInformer appsinformers.DeploymentInformer,
-	fimwatchInformer informers.FimWatchInformer) *Controller {
+	fimListenerInformer informers.FimListenerInformer) *Controller {
 
 	// Create event broadcaster
 	// Add fimcontroller types to the default Kubernetes Scheme so Events can be
@@ -86,27 +86,27 @@ func NewController(
 	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: controllerAgentName})
 
 	controller := &Controller{
-		kubeclientset:     kubeclientset,
-		fimclientset:      fimclientset,
-		deploymentsLister: deploymentInformer.Lister(),
-		deploymentsSynced: deploymentInformer.Informer().HasSynced,
-		fimwatchesLister:  fimwatchInformer.Lister(),
-		fimwatchesSynced:  fimwatchInformer.Informer().HasSynced,
-		workqueue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "FimWatches"),
-		recorder:          recorder,
+		kubeclientset:      kubeclientset,
+		fimclientset:       fimclientset,
+		deploymentsLister:  deploymentInformer.Lister(),
+		deploymentsSynced:  deploymentInformer.Informer().HasSynced,
+		fimListenersLister: fimListenerInformer.Lister(),
+		fimListenersSynced: fimListenerInformer.Informer().HasSynced,
+		workqueue:          workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "FimListeners"),
+		recorder:           recorder,
 	}
 
 	glog.Info("Setting up event handlers")
-	// Set up an event handler for when FimWatch resources change
-	fimwatchInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: controller.enqueueFimWatch,
+	// Set up an event handler for when FimListener resources change
+	fimListenerInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: controller.enqueueFimListener,
 		UpdateFunc: func(old, new interface{}) {
-			controller.enqueueFimWatch(new)
+			controller.enqueueFimListener(new)
 		},
 	})
 	// Set up an event handler for when Deployment resources change. This
 	// handler will lookup the owner of the given Deployment, and if it is
-	// owned by a FimWatch resource will enqueue that FimWatch resource for
+	// owned by a FimListener resource will enqueue that FimListener resource for
 	// processing. This way, we don't need to implement custom logic for
 	// handling Deployment resources. More info on this pattern:
 	// https://github.com/kubernetes/community/blob/8cafef897a22026d42f5e5bb3f104febe7e29830/contributors/devel/controllers.md
@@ -137,16 +137,16 @@ func (c *Controller) Run(threadiness int, stopCh <-chan struct{}) error {
 	defer c.workqueue.ShutDown()
 
 	// Start the informer factories to begin populating the informer caches
-	glog.Info("Starting FimWatch controller")
+	glog.Info("Starting FimListener controller")
 
 	// Wait for the caches to be synced before starting workers
 	glog.Info("Waiting for informer caches to sync")
-	if ok := cache.WaitForCacheSync(stopCh, c.deploymentsSynced, c.fimwatchesSynced); !ok {
+	if ok := cache.WaitForCacheSync(stopCh, c.deploymentsSynced, c.fimListenersSynced); !ok {
 		return fmt.Errorf("failed to wait for caches to sync")
 	}
 
 	glog.Info("Starting workers")
-	// Launch two workers to process FimWatch resources
+	// Launch two workers to process FimListener resources
 	for i := 0; i < threadiness; i++ {
 		go wait.Until(c.runWorker, time.Second, stopCh)
 	}
@@ -200,7 +200,7 @@ func (c *Controller) processNextWorkItem() bool {
 			return nil
 		}
 		// Run the syncHandler, passing it the namespace/name string of the
-		// FimWatch resource to be synced.
+		// FimListener resource to be synced.
 		if err := c.syncHandler(key); err != nil {
 			return fmt.Errorf("error syncing '%s': %s", key, err.Error())
 		}
@@ -220,7 +220,7 @@ func (c *Controller) processNextWorkItem() bool {
 }
 
 // syncHandler compares the actual state with the desired, and attempts to
-// converge the two. It then updates the Status block of the FimWatch resource
+// converge the two. It then updates the Status block of the FimListener resource
 // with the current status of the resource.
 func (c *Controller) syncHandler(key string) error {
 	// Convert the namespace/name string into a distinct namespace and name
@@ -230,19 +230,19 @@ func (c *Controller) syncHandler(key string) error {
 		return nil
 	}
 
-	// Get the FimWatch resource with this namespace/name
-	fimwatch, err := c.fimwatchesLister.FimWatches(namespace).Get(name)
+	// Get the FimListener resource with this namespace/name
+	fimListener, err := c.fimListenersLister.FimListeners(namespace).Get(name)
 	if err != nil {
-		// The FimWatch resource may no longer exist, in which case we stop
+		// The FimListener resource may no longer exist, in which case we stop
 		// processing.
 		if errors.IsNotFound(err) {
-			runtime.HandleError(fmt.Errorf("fimwatch '%s' in work queue no longer exists", key))
+			runtime.HandleError(fmt.Errorf("fimListener '%s' in work queue no longer exists", key))
 			return nil
 		}
 		return err
 	}
 
-	deploymentName := fimwatch.Spec.DeploymentName
+	deploymentName := fimListener.Spec.DeploymentName
 	if deploymentName == "" {
 		// We choose to absorb the error here as the worker would requeue the
 		// resource otherwise. Instead, the next time the resource is updated
@@ -251,11 +251,11 @@ func (c *Controller) syncHandler(key string) error {
 		return nil
 	}
 
-	// Get the deployment with the name specified in FimWatch.spec
-	deployment, err := c.deploymentsLister.Deployments(fimwatch.Namespace).Get(deploymentName)
+	// Get the deployment with the name specified in FimListener.spec
+	deployment, err := c.deploymentsLister.Deployments(fimListener.Namespace).Get(deploymentName)
 	// If the resource doesn't exist, we'll create it
 	if errors.IsNotFound(err) {
-		deployment, err = c.kubeclientset.AppsV1().Deployments(fimwatch.Namespace).Create(newDeployment(fimwatch))
+		deployment, err = c.kubeclientset.AppsV1().Deployments(fimListener.Namespace).Create(newDeployment(fimListener))
 	}
 
 	// If an error occurs during Get/Create, we'll requeue the item so we can
@@ -265,20 +265,20 @@ func (c *Controller) syncHandler(key string) error {
 		return err
 	}
 
-	// If the Deployment is not controlled by this FimWatch resource, we should log
+	// If the Deployment is not controlled by this FimListener resource, we should log
 	// a warning to the event recorder and ret
-	if !metav1.IsControlledBy(deployment, fimwatch) {
+	if !metav1.IsControlledBy(deployment, fimListener) {
 		msg := fmt.Sprintf(MessageResourceExists, deployment.Name)
-		c.recorder.Event(fimwatch, corev1.EventTypeWarning, ErrResourceExists, msg)
+		c.recorder.Event(fimListener, corev1.EventTypeWarning, ErrResourceExists, msg)
 		return fmt.Errorf(msg)
 	}
 
-	// If this number of the replicas on the FimWatch resource is specified, and the
+	// If this number of the replicas on the FimListener resource is specified, and the
 	// number does not equal the current desired replicas on the Deployment, we
 	// should update the Deployment resource.
-	if fimwatch.Spec.Replicas != nil && *fimwatch.Spec.Replicas != *deployment.Spec.Replicas {
-		glog.V(4).Infof("FimWatch %s replicas: %d, deployment replicas: %d", name, *fimwatch.Spec.Replicas, *deployment.Spec.Replicas)
-		deployment, err = c.kubeclientset.AppsV1().Deployments(fimwatch.Namespace).Update(newDeployment(fimwatch))
+	if fimListener.Spec.Replicas != nil && *fimListener.Spec.Replicas != *deployment.Spec.Replicas {
+		glog.V(4).Infof("FimListener %s replicas: %d, deployment replicas: %d", name, *fimListener.Spec.Replicas, *deployment.Spec.Replicas)
+		deployment, err = c.kubeclientset.AppsV1().Deployments(fimListener.Namespace).Update(newDeployment(fimListener))
 	}
 
 	// If an error occurs during Update, we'll requeue the item so we can
@@ -288,35 +288,35 @@ func (c *Controller) syncHandler(key string) error {
 		return err
 	}
 
-	// Finally, we update the status block of the FimWatch resource to reflect the
+	// Finally, we update the status block of the FimListener resource to reflect the
 	// current state of the world
-	err = c.updateFimWatchStatus(fimwatch, deployment)
+	err = c.updateFimListenerStatus(fimListener, deployment)
 	if err != nil {
 		return err
 	}
 
-	c.recorder.Event(fimwatch, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
+	c.recorder.Event(fimListener, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
 	return nil
 }
 
-func (c *Controller) updateFimWatchStatus(fimwatch *fimv1alpha1.FimWatch, deployment *appsv1.Deployment) error {
+func (c *Controller) updateFimListenerStatus(fimListener *fimv1alpha1.FimListener, deployment *appsv1.Deployment) error {
 	// NEVER modify objects from the store. It's a read-only, local cache.
 	// You can use DeepCopy() to make a deep copy of original object and modify this copy
 	// Or create a copy manually for better performance
-	fimwatchCopy := fimwatch.DeepCopy()
-	fimwatchCopy.Status.AvailableReplicas = deployment.Status.AvailableReplicas
+	fimListenerCopy := fimListener.DeepCopy()
+	fimListenerCopy.Status.AvailableReplicas = deployment.Status.AvailableReplicas
 	// If the CustomResourceSubresources feature gate is not enabled,
-	// we must use Update instead of UpdateStatus to update the Status block of the FimWatch resource.
+	// we must use Update instead of UpdateStatus to update the Status block of the FimListener resource.
 	// UpdateStatus will not allow changes to the Spec of the resource,
 	// which is ideal for ensuring nothing other than resource status has been updated.
-	_, err := c.fimclientset.FimcontrollerV1alpha1().FimWatches(fimwatch.Namespace).Update(fimwatchCopy)
+	_, err := c.fimclientset.FimcontrollerV1alpha1().FimListeners(fimListener.Namespace).Update(fimListenerCopy)
 	return err
 }
 
-// enqueueFimWatch takes a FimWatch resource and converts it into a namespace/name
+// enqueueFimListener takes a FimListener resource and converts it into a namespace/name
 // string which is then put onto the work queue. This method should *not* be
-// passed resources of any type other than FimWatch.
-func (c *Controller) enqueueFimWatch(obj interface{}) {
+// passed resources of any type other than FimListener.
+func (c *Controller) enqueueFimListener(obj interface{}) {
 	var key string
 	var err error
 	if key, err = cache.MetaNamespaceKeyFunc(obj); err != nil {
@@ -327,9 +327,9 @@ func (c *Controller) enqueueFimWatch(obj interface{}) {
 }
 
 // handleObject will take any resource implementing metav1.Object and attempt
-// to find the FimWatch resource that 'owns' it. It does this by looking at the
+// to find the FimListener resource that 'owns' it. It does this by looking at the
 // objects metadata.ownerReferences field for an appropriate OwnerReference.
-// It then enqueues that FimWatch resource to be processed. If the object does not
+// It then enqueues that FimListener resource to be processed. If the object does not
 // have an appropriate OwnerReference, it will simply be skipped.
 func (c *Controller) handleObject(obj interface{}) {
 	var object metav1.Object
@@ -349,45 +349,45 @@ func (c *Controller) handleObject(obj interface{}) {
 	}
 	glog.V(4).Infof("Processing object: %s", object.GetName())
 	if ownerRef := metav1.GetControllerOf(object); ownerRef != nil {
-		// If this object is not owned by a FimWatch, we should not do anything more
+		// If this object is not owned by a FimListener, we should not do anything more
 		// with it.
-		if ownerRef.Kind != "FimWatch" {
+		if ownerRef.Kind != "FimListener" {
 			return
 		}
 
-		fimwatch, err := c.fimwatchesLister.FimWatches(object.GetNamespace()).Get(ownerRef.Name)
+		fimListener, err := c.fimListenersLister.FimListeners(object.GetNamespace()).Get(ownerRef.Name)
 		if err != nil {
-			glog.V(4).Infof("ignoring orphaned object '%s' of fimwatch '%s'", object.GetSelfLink(), ownerRef.Name)
+			glog.V(4).Infof("ignoring orphaned object '%s' of fimListener '%s'", object.GetSelfLink(), ownerRef.Name)
 			return
 		}
 
-		c.enqueueFimWatch(fimwatch)
+		c.enqueueFimListener(fimListener)
 		return
 	}
 }
 
-// newDeployment creates a new Deployment for a FimWatch resource. It also sets
+// newDeployment creates a new Deployment for a FimListener resource. It also sets
 // the appropriate OwnerReferences on the resource so handleObject can discover
-// the FimWatch resource that 'owns' it.
-func newDeployment(fimwatch *fimv1alpha1.FimWatch) *appsv1.Deployment {
+// the FimListener resource that 'owns' it.
+func newDeployment(fimListener *fimv1alpha1.FimListener) *appsv1.Deployment {
 	labels := map[string]string{
 		"app":        "nginx",
-		"controller": fimwatch.Name,
+		"controller": fimListener.Name,
 	}
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fimwatch.Spec.DeploymentName,
-			Namespace: fimwatch.Namespace,
+			Name:      fimListener.Spec.DeploymentName,
+			Namespace: fimListener.Namespace,
 			OwnerReferences: []metav1.OwnerReference{
-				*metav1.NewControllerRef(fimwatch, schema.GroupVersionKind{
+				*metav1.NewControllerRef(fimListener, schema.GroupVersionKind{
 					Group:   fimv1alpha1.SchemeGroupVersion.Group,
 					Version: fimv1alpha1.SchemeGroupVersion.Version,
-					Kind:    "FimWatch",
+					Kind:    "FimListener",
 				}),
 			},
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: fimwatch.Spec.Replicas,
+			Replicas: fimListener.Spec.Replicas,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: labels,
 			},

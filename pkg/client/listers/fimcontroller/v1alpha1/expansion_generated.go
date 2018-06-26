@@ -2,10 +2,10 @@
 
 package v1alpha1
 
-// FimWatchListerExpansion allows custom methods to be added to
-// FimWatchLister.
-type FimWatchListerExpansion interface{}
+// FimListenerListerExpansion allows custom methods to be added to
+// FimListenerLister.
+type FimListenerListerExpansion interface{}
 
-// FimWatchNamespaceListerExpansion allows custom methods to be added to
-// FimWatchNamespaceLister.
-type FimWatchNamespaceListerExpansion interface{}
+// FimListenerNamespaceListerExpansion allows custom methods to be added to
+// FimListenerNamespaceLister.
+type FimListenerNamespaceListerExpansion interface{}
