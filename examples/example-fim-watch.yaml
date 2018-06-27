@@ -1,7 +1,12 @@
 apiVersion: fimcontroller.clustergarage.io/v1alpha1
 kind: FimWatcher
 metadata:
-  name: example-fim-watcher
+  name: nginx-fim-watcher
 spec:
-  deploymentName: example-foo
-  replicas: 1
+  selector:
+    matchLabels:
+      run: nginx
+  subjects:
+  - path: /var/log/nginx
+    events:
+    - modify

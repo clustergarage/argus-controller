@@ -19,43 +19,45 @@ var (
 	kubeconfig string
 )
 
+func getKubernetesClient() (kubernetes.Interface, clientset.Interface) {
+	config, err := clientcmd.BuildConfigFromFlags(masterURL, kubeconfig)
+	if err != nil {
+		log.Fatalf("Error building kubeconfig: %s", err.Error())
+	}
+	kubeclientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		log.Fatalf("Error building kubernetes clientset: %s", err.Error())
+	}
+	fimclientset, err := clientset.NewForConfig(config)
+	if err != nil {
+		log.Fatalf("Error building fim clientset: %s", err.Error())
+	}
+	return kubeclientset, fimclientset
+}
+
 func main() {
 	flag.Parse()
 
 	// set up signals so we handle the first shutdown signal gracefully
 	stopCh := signals.SetupSignalHandler()
 
-	cfg, err := clientcmd.BuildConfigFromFlags(masterURL, kubeconfig)
-	if err != nil {
-		log.Fatalf("Error building kubeconfig: %s", err.Error())
-	}
+	kubeclientset, fimclientset := getKubernetesClient()
+	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(kubeclientset, time.Second*30)
+	fimInformerFactory := informers.NewSharedInformerFactory(fimclientset, time.Second*30)
 
-	kubeClient, err := kubernetes.NewForConfig(cfg)
-	if err != nil {
-		log.Fatalf("Error building kubernetes clientset: %s", err.Error())
-	}
-
-	exampleClient, err := clientset.NewForConfig(cfg)
-	if err != nil {
-		log.Fatalf("Error building example clientset: %s", err.Error())
-	}
-
-	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(kubeClient, time.Second*30)
-	exampleInformerFactory := informers.NewSharedInformerFactory(exampleClient, time.Second*30)
-
-	controller := NewController(kubeClient, exampleClient,
-		kubeInformerFactory.Apps().V1().Deployments(),
-		exampleInformerFactory.Fimcontroller().V1alpha1().FimWatchers())
+	controller := NewFimWatcherController(kubeclientset, fimclientset,
+		fimInformerFactory.Fimcontroller().V1alpha1().FimWatchers(),
+		kubeInformerFactory.Core().V1().Pods())
 
 	go kubeInformerFactory.Start(stopCh)
-	go exampleInformerFactory.Start(stopCh)
+	go fimInformerFactory.Start(stopCh)
 
-	if err = controller.Run(2, stopCh); err != nil {
+	if err := controller.Run(2, stopCh); err != nil {
 		log.Fatalf("Error running controller: %s", err.Error())
 	}
 }
 
 func init() {
-	flag.StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig. Only required if out-of-cluster.")
 	flag.StringVar(&masterURL, "master", "", "The address of the Kubernetes API server. Overrides any value in kubeconfig. Only required if out-of-cluster.")
+	flag.StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig. Only required if out-of-cluster.")
 }
