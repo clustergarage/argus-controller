@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"time"
 
 	"github.com/golang/glog"
@@ -22,7 +23,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
-	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
+	//podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/controller"
 
 	fimv1alpha1 "clustergarage.io/fim-k8s/pkg/apis/fimcontroller/v1alpha1"
@@ -40,6 +41,9 @@ const (
 	// MessageResourceSynced is the message used for an Event fired when a FimWatcher
 	// is synced successfully
 	MessageResourceSynced = "FimWatcher synced successfully"
+
+	// The number of times we retry updating a FimWatcher's status.
+	statusUpdateRetries = 1
 )
 
 // Controller is the controller implementation for FimWatcher resources
@@ -132,12 +136,13 @@ func NewFimWatcherController(kubeclientset kubernetes.Interface, fimclientset cl
 // as syncing informer caches and starting workers. It will block until stopCh
 // is closed, at which point it will shutdown the workqueue and wait for
 // workers to finish processing their current work items.
-func (fwc *FimWatcherController) Run(threadiness int, stopCh <-chan struct{}) error {
+func (fwc *FimWatcherController) Run(workers int, stopCh <-chan struct{}) error {
 	defer runtime.HandleCrash()
 	defer fwc.workqueue.ShutDown()
 
 	// Start the informer factories to begin populating the informer caches
 	glog.Info("Starting FimWatcher controller")
+	defer glog.Info("Shutting down FimWatcher controller")
 
 	// Wait for the caches to be synced before starting workers
 	glog.Info("Waiting for informer caches to sync")
@@ -147,10 +152,9 @@ func (fwc *FimWatcherController) Run(threadiness int, stopCh <-chan struct{}) er
 
 	glog.Info("Starting workers")
 	// Launch two workers to process FimWatcher resources
-	for i := 0; i < threadiness; i++ {
+	for i := 0; i < workers; i++ {
 		go wait.Until(fwc.runWorker, time.Second, stopCh)
 	}
-
 	glog.Info("Started workers")
 	<-stopCh
 	glog.Info("Shutting down workers")
@@ -196,18 +200,17 @@ func (fwc *FimWatcherController) getPodFimWatchers(pod *corev1.Pod) []*fimv1alph
 	if len(fws) > 1 {
 		// ControllerRef will ensure we don't do anything crazy, but more than one
 		// item in this list nevertheless constitutes user error.
-		//runtime.HandleError(fmt.Errorf("user error! more than one %v is selecting pods with labels: %+v", rsc.Kind, pod.Labels))
+		runtime.HandleError(fmt.Errorf("user error! more than one %v is selecting pods with labels: %+v", fwc.Kind, pod.Labels))
 	}
-
 	return fws
 }
 
 func (fwc *FimWatcherController) resolveControllerRef(namespace string, controllerRef *metav1.OwnerReference) *fimv1alpha1.FimWatcher {
 	// We can't look up by UID, so look up by Name and then verify UID.
 	// Don't even try to look up by Name if it's the wrong Kind.
-	//if controllerRef.Kind != fwc.Kind {
-	//	return nil
-	//}
+	if controllerRef.Kind != fwc.Kind {
+		return nil
+	}
 
 	fw, err := fwc.fwLister.FimWatchers(namespace).Get(controllerRef.Name)
 	if err != nil {
@@ -236,6 +239,7 @@ func (fwc *FimWatcherController) updateFimWatcher(old, new interface{}) {
 // When a pod is created, enqueue the fim watcher that manages it and update its expectations.
 func (fwc *FimWatcherController) addPod(obj interface{}) {
 	pod := obj.(*corev1.Pod)
+	//cid := pod.Status.ContainerStatuses[0].ContainerID
 
 	if pod.DeletionTimestamp != nil {
 		// on a restart of the controller manager, it's possible a new pod shows up in a state that
@@ -324,12 +328,12 @@ func (fwc *FimWatcherController) updatePod(old, new interface{}) {
 	// Otherwise, it's an orphan. If anything changed, sync matching controllers
 	// to see if anyone wants to adopt it now.
 	if labelChanged || controllerRefChanged {
-		rss := fwc.getPodFimWatchers(newPod)
-		if len(rss) == 0 {
+		fws := fwc.getPodFimWatchers(newPod)
+		if len(fws) == 0 {
 			return
 		}
 		glog.V(4).Infof("Orphan Pod %s updated, objectMeta %+v -> %+v.", newPod.Name, oldPod.ObjectMeta, newPod.ObjectMeta)
-		for _, fw := range rss {
+		for _, fw := range fws {
 			fwc.enqueueFimWatcher(fw)
 		}
 	}
@@ -339,6 +343,7 @@ func (fwc *FimWatcherController) updatePod(old, new interface{}) {
 // obj could be an *v1.Pod, or a DeletionFinalStateUnknown marker item.
 func (fwc *FimWatcherController) deletePod(obj interface{}) {
 	pod, ok := obj.(*corev1.Pod)
+	//cid := pod.Status.ContainerStatuses[0].ContainerID
 
 	// When a delete is dropped, the relist will notice a pod in the store not
 	// in the list, leading to the insertion of a tombstone object which contains
@@ -379,16 +384,23 @@ func (fwc *FimWatcherController) deletePod(obj interface{}) {
 // string which is then put onto the work queue. This method should *not* be
 // passed resources of any type other than FimWatcher.
 func (fwc *FimWatcherController) enqueueFimWatcher(obj interface{}) {
-	var key string
-	var err error
-	if key, err = cache.MetaNamespaceKeyFunc(obj); err != nil {
-		runtime.HandleError(err)
+	key, err := controller.KeyFunc(obj)
+	if err != nil {
+		runtime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
 		return
 	}
 	fwc.workqueue.AddRateLimited(key)
 }
 
-// @TODO: enqueueFimWatcherAfter ?
+// obj could be an *fimv1alpha1.FimWatcher, or a DeletionFinalStateUnknown marker item.
+func (fwc *FimWatcherController) enqueueFimWatcherAfter(obj interface{}, after time.Duration) {
+	key, err := controller.KeyFunc(obj)
+	if err != nil {
+		runtime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
+		return
+	}
+	fwc.workqueue.AddAfter(key, after)
+}
 
 // runWorker is a long-running function that will continually call the
 // processNextWorkItem function in order to read and process a message on the
@@ -451,7 +463,90 @@ func (fwc *FimWatcherController) processNextWorkItem() bool {
 	return true
 }
 
-// @TODO: manageFimWatchers ?
+// manageFimWatchers checks and updates subjects for the given FimWatcher.
+// Does NOT modify <filteredPods>.
+// It will requeue the fim wtacher in case of an error while creating/deleting pods.
+func (fwc *FimWatcherController) manageFimWatchers(filteredPods []*corev1.Pod, fw *fimv1alpha1.FimWatcher) error {
+	diff := len(filteredPods) - len(fw.Spec.Subjects)
+	fwKey, err := controller.KeyFunc(fw)
+	if err != nil {
+		runtime.HandleError(fmt.Errorf("Couldn't get key for %v %#v: %v", fwc.Kind, fw, err))
+		return nil
+	}
+	if diff < 0 {
+		diff *= -1
+		//if diff > fwc.burstReplicas {
+		//	diff = fwc.burstReplicas
+		//}
+		// TODO: Track UIDs of creates just like deletes. The problem currently
+		// is we'd need to wait on the result of a create to record the pod's
+		// UID, which would require locking *across* the create, which will turn
+		// into a performance bottleneck. We should generate a UID for the pod
+		// beforehand and store it via ExpectCreations.
+		fwc.expectations.ExpectCreations(fwKey, diff)
+		glog.V(2).Infof("Too few subjects for %v %s/%s, need %d, creating %d", fwc.Kind, fw.Namespace, fw.Name, len(fw.Spec.Subjects), diff)
+
+		/*
+			// Any skipped pods that we never attempted to start shouldn't be expected.
+			// The skipped pods will be retried later. The next controller resync will
+			// retry the slow start process.
+			if skippedPods := diff - successfulCreations; skippedPods > 0 {
+				glog.V(2).Infof("Slow-start failure. Skipping creation of %d pods, decrementing expectations for %v %v/%v", skippedPods, fwc.Kind, fw.Namespace, fw.Name)
+				for i := 0; i < skippedPods; i++ {
+					// Decrement the expected number of creates because the informer won't observe this pod
+					fwc.expectations.CreationObserved(fwKey)
+				}
+			}
+		*/
+		return err
+	} else if diff > 0 {
+		//if diff > fwc.burstReplicas {
+		//	diff = fwc.burstReplicas
+		//}
+		glog.V(2).Infof("Too many subjects for %v %s/%s, need %d, deleting %d", fwc.Kind, fw.Namespace, fw.Name, len(fw.Spec.Subjects), diff)
+
+		// Choose which Pods to delete, preferring those in earlier phases of startup.
+		podsToDelete := getPodsToDelete(filteredPods, diff)
+
+		// Snapshot the UIDs (ns/name) of the pods we're expecting to see
+		// deleted, so we know to record their expectations exactly once either
+		// when we see it as an update of the deletion timestamp, or as a delete.
+		// Note that if the labels on a pod/fw change in a way that the pod gets
+		// orphaned, the fw will only wake up after the expectations have
+		// expired even if other pods are deleted.
+		fwc.expectations.ExpectDeletions(fwKey, getPodKeys(podsToDelete))
+
+		/*
+				errCh := make(chan error, diff)
+				var wg sync.WaitGroup
+				wg.Add(diff)
+				for _, pod := range podsToDelete {
+					go func(targetPod *v1.Pod) {
+						defer wg.Done()
+						if err := fwc.podControl.DeletePod(fw.Namespace, targetPod.Name, fw); err != nil {
+							// Decrement the expected number of deletes because the informer won't observe this deletion
+							podKey := controller.PodKey(targetPod)
+							glog.V(2).Infof("Failed to delete %v, decrementing expectations for %v %s/%s", podKey, fwc.Kind, fw.Namespace, fw.Name)
+							fwc.expectations.DeletionObserved(fwKey, podKey)
+							errCh <- err
+						}
+					}(pod)
+				}
+				wg.Wait()
+
+			select {
+			case err := <-errCh:
+				// all errors have been reported before and they're likely to be the same, so we'll only return the first one we hit.
+				if err != nil {
+					return err
+				}
+			default:
+			}
+		*/
+	}
+
+	return nil
+}
 
 // syncHandler compares the actual state with the desired, and attempts to
 // converge the two. It then updates the Status block of the FimWatcher resource
@@ -481,6 +576,7 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 		return err
 	}
 
+	fwNeedsSync := fwc.expectations.SatisfiedExpectations(key)
 	selector, err := metav1.LabelSelectorAsSelector(fw.Spec.Selector)
 	if err != nil {
 		runtime.HandleError(fmt.Errorf("Error converting pod selector to selector: %v", err))
@@ -489,65 +585,50 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 
 	// list all pods to include the pods that don't match the fw's selector
 	// anymore but has the stale controller ref
-	allPods, err := fwc.podLister.Pods(fw.Namespace).List(labels.Everything())
+	//allPods, err := fwc.podLister.Pods(fw.Namespace).List(labels.Everything())
+	//if err != nil {
+	//	return err
+	//}
+	filteredPods, err := fwc.podLister.Pods(fw.Namespace).List(selector)
 	if err != nil {
 		return err
 	}
 
-	// get pods by selector
-	var filteredPods []*corev1.Pod
-	selectedPods, err := fwc.podLister.Pods(fw.Namespace).List(selector)
-	if err != nil {
-		return err
+	var manageSubjectsErr error
+	if fwNeedsSync && fw.DeletionTimestamp == nil {
+		manageSubjectsErr = fwc.manageFimWatchers(filteredPods, fw)
 	}
-	for _, pod := range selectedPods {
-		if !podutil.IsPodReady(pod) {
-			continue
-		}
-		filteredPods = append(filteredPods, pod)
-	}
+	fw = fw.DeepCopy()
+	newStatus := calculateStatus(fw, filteredPods, manageSubjectsErr)
 
-	// remove watchers from stale pods
-	for _, pod := range allPods {
-		var found bool
-		for _, p := range filteredPods {
-			if pod == p {
-				found = true
-				break
-			}
-		}
-		if !controller.IsPodActive(pod) || !found {
-			// remove inotify watcher
-			cid := pod.Status.ContainerStatuses[0].ContainerID
-			fmt.Printf(" * Remove watcher: %s\n", cid)
-		}
-	}
-	// add watcher from new pods
-	for _, pod := range filteredPods {
-		cid := pod.Status.ContainerStatuses[0].ContainerID
-		fmt.Printf(" * Add watcher: %s\n", cid)
-	}
-
-	err = fwc.updateFimWatcherStatus(fw, filteredPods)
+	// Always updates status as pods come up or die.
+	_, err = updateFimWatcherStatus(fwc.fimclientset.FimcontrollerV1alpha1().FimWatchers(fw.Namespace), fw, newStatus)
 	if err != nil {
+		// Multiple things could lead to this update failing. Requeuing the replica set ensures
+		// Returning an error causes a requeue without forcing a hotloop
 		return err
 	}
 	fwc.recorder.Event(fw, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
 
-	return nil
+	return manageSubjectsErr
 }
 
-func (fwc *FimWatcherController) updateFimWatcherStatus(fw *fimv1alpha1.FimWatcher, pods []*corev1.Pod) error {
-	// NEVER modify objects from the store. It's a read-only, local cache.
-	// You can use DeepCopy() to make a deep copy of original object and modify this copy
-	// Or create a copy manually for better performance
-	fwCopy := fw.DeepCopy()
-	fwCopy.Status.AvailableSubjects = (int32)(len(pods))
+func getPodsToDelete(filteredPods []*corev1.Pod, diff int) []*corev1.Pod {
+	// No need to sort pods if we are about to delete all of them.
+	// diff will always be <= len(filteredPods), so not need to handle > case.
+	if diff < len(filteredPods) {
+		// Sort the pods in the order such that not-ready < ready, unscheduled
+		// < scheduled, and pending < running. This ensures that we delete pods
+		// in the earlier stages whenever possible.
+		sort.Sort(controller.ActivePods(filteredPods))
+	}
+	return filteredPods[:diff]
+}
 
-	// If the CustomResourceSubresources feature gate is not enabled,
-	// we must use Update instead of UpdateStatus to update the Status block of the FimWatcher resource.
-	// UpdateStatus will not allow changes to the Spec of the resource,
-	// which is ideal for ensuring nothing other than resource status has been updated.
-	_, err := fwc.fimclientset.FimcontrollerV1alpha1().FimWatchers(fw.Namespace).Update(fwCopy)
-	return err
+func getPodKeys(pods []*corev1.Pod) []string {
+	podKeys := make([]string, 0, len(pods))
+	for _, pod := range pods {
+		podKeys = append(podKeys, controller.PodKey(pod))
+	}
+	return podKeys
 }

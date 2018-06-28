@@ -1,5 +1,3 @@
 package fimcontroller
 
-const (
-	GroupName = "fimcontroller.clustergarage.io"
-)
+const GroupName = "fimcontroller.clustergarage.io"
