@@ -477,24 +477,24 @@ func (fwc *FimWatcherController) manageObservers(rmPods []*corev1.Pod, addPods [
 
 	var podsToUpdate []*corev1.Pod
 	for _, pod := range rmPods {
-		updatedPod, err := updateAnnotations([]string{FimWatcherAnnotationKey}, nil, pod)
+		err := updateAnnotations([]string{FimWatcherAnnotationKey}, nil, pod)
 		if err != nil {
 			return err
 		}
-		podsToUpdate = append(podsToUpdate, updatedPod)
+		podsToUpdate = append(podsToUpdate, pod)
 	}
 	for _, pod := range addPods {
-		updatedPod, err := updateAnnotations(nil, map[string]string{FimWatcherAnnotationKey: fw.Name}, pod)
+		err := updateAnnotations(nil, map[string]string{FimWatcherAnnotationKey: fw.Name}, pod)
 		if err != nil {
 			return err
 		}
-		podsToUpdate = append(podsToUpdate, updatedPod)
+		podsToUpdate = append(podsToUpdate, pod)
 	}
 
-	for _, updatedPod := range podsToUpdate {
-		updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(updatedPod.Namespace),
-			fwc.podLister, fw.Namespace, updatedPod.Name, func(po *corev1.Pod) error {
-				po.Annotations = updatedPod.Annotations
+	for _, pod := range podsToUpdate {
+		updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(pod.Namespace),
+			fwc.podLister, fw.Namespace, pod.Name, func(po *corev1.Pod) error {
+				po.Annotations = pod.Annotations
 				return nil
 			})
 	}
