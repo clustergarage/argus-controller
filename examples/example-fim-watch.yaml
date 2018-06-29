@@ -7,6 +7,7 @@ spec:
     matchLabels:
       run: nginx
   subjects:
-  - path: /var/log/nginx
+  - paths:
+    - /var/log/nginx
     events:
     - modify

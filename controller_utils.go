@@ -1,13 +1,15 @@
 package main
 
 import (
-	//"fmt"
+	"fmt"
 	//"reflect"
 
 	//"github.com/golang/glog"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
+	//podutil "k8s.io/kubernetes/pkg/api/v1/pod"
+	"k8s.io/apimachinery/pkg/runtime"
 
 	fimv1alpha1 "clustergarage.io/fim-k8s/pkg/apis/fimcontroller/v1alpha1"
 	fimv1alpha1client "clustergarage.io/fim-k8s/pkg/client/clientset/versioned/typed/fimcontroller/v1alpha1"
@@ -18,9 +20,8 @@ func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1al
 	// You can use DeepCopy() to make a deep copy of original object and modify this copy
 	// Or create a copy manually for better performance
 	fwCopy := fw.DeepCopy()
-	fwCopy.Status.ReadySubjects = newStatus.ReadySubjects
-	fwCopy.Status.AvailableSubjects = newStatus.AvailableSubjects
-	fwCopy.Generation = fw.Status.ObservedGeneration
+	//fwCopy.Status.Subjects = newStatus.Subjects
+	fwCopy.Status.ObservablePods = newStatus.ObservablePods
 	// If the CustomResourceSubresources feature gate is not enabled,
 	// we must use Update instead of UpdateStatus to update the Status block of the FimWatcher resource.
 	// UpdateStatus will not allow changes to the Spec of the resource,
@@ -31,39 +32,44 @@ func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1al
 func calculateStatus(fw *fimv1alpha1.FimWatcher, filteredPods []*corev1.Pod, manageFimWatchersErr error) fimv1alpha1.FimWatcherStatus {
 	newStatus := fw.Status
 	// Count the number of pods that have labels matching the labels of the pod
-	// template of the fim watcher, the matching pods may have more
+	// template of the replica set, the matching pods may have more
 	// labels than are in the template. Because the label of podTemplateSpec is
-	// a superset of the selector of the fim watcher, so the possible
+	// a superset of the selector of the replica set, so the possible
 	// matching pods must be part of the filteredPods.
-	readySubjectsCount := 0
-	availableSubjectsCount := 0
-	//templateLabel := labels.Set(fw.Spec.Template.Labels).AsSelectorPreValidated()
+	observablePodsCount := 0
+	//templateLabel := labels.Set(fw.Spec.Selector).AsSelectorPreValidated()
 	for _, pod := range filteredPods {
-		if podutil.IsPodReady(pod) {
-			readySubjectsCount++
-			if podutil.IsPodAvailable(pod, 60, metav1.Now()) {
-				availableSubjectsCount++
+		if _, found := pod.GetAnnotations()[ObservableAnnotationKey]; found {
+			observablePodsCount++
+		}
+		//if templateLabel.Matches(labels.Set(pod.Labels)) {
+		//	observablePodsCount++
+		//}
+		//if podutil.IsPodReady(pod) {
+		//	readyReplicasCount++
+		//	if podutil.IsPodAvailable(pod, rs.Spec.MinReadySeconds, metav1.Now()) {
+		//		availableReplicasCount++
+		//	}
+		//}
+	}
+
+	/*
+		failureCond := GetCondition(fw.Status, fimv1alpha1.FimWatcherSubjectFailure)
+		if manageFimWatchersErr != nil && failureCond == nil {
+			var reason string
+			if diff := len(filteredPods) - len(fw.Spec.Subjects); diff < 0 {
+				reason = "FailedCreate"
+			} else if diff > 0 {
+				reason = "FailedDelete"
 			}
+			cond := NewFimWatcherCondition(fimv1alpha1.FimWatcherSubjectFailure, corev1.ConditionTrue, reason, manageFimWatchersErr.Error())
+			SetCondition(&newStatus, cond)
+		} else if manageFimWatchersErr == nil && failureCond != nil {
+			RemoveCondition(&newStatus, fimv1alpha1.FimWatcherSubjectFailure)
 		}
-	}
+	*/
 
-	failureCond := GetCondition(fw.Status, fimv1alpha1.FimWatcherSubjectFailure)
-	if manageFimWatchersErr != nil && failureCond == nil {
-		var reason string
-		if diff := len(filteredPods) - len(fw.Spec.Subjects); diff < 0 {
-			reason = "FailedCreate"
-		} else if diff > 0 {
-			reason = "FailedDelete"
-		}
-		cond := NewFimWatcherCondition(fimv1alpha1.FimWatcherSubjectFailure, corev1.ConditionTrue, reason, manageFimWatchersErr.Error())
-		SetCondition(&newStatus, cond)
-	} else if manageFimWatchersErr == nil && failureCond != nil {
-		RemoveCondition(&newStatus, fimv1alpha1.FimWatcherSubjectFailure)
-	}
-
-	newStatus.Subjects = int32(len(filteredPods))
-	newStatus.ReadySubjects = int32(readySubjectsCount)
-	newStatus.AvailableSubjects = int32(availableSubjectsCount)
+	newStatus.ObservablePods = fmt.Sprintf("%d (%d subjects)", int32(observablePodsCount), int32(observablePodsCount*len(fw.Spec.Subjects)))
 	return newStatus
 }
 
@@ -114,4 +120,31 @@ func filterOutCondition(conditions []fimv1alpha1.FimWatcherCondition, condType f
 		newConditions = append(newConditions, c)
 	}
 	return newConditions
+}
+
+func updateAnnotations(removeAnnotations []string, newAnnotations map[string]string, obj runtime.Object) error {
+	accessor, err := meta.Accessor(obj)
+	if err != nil {
+		return err
+	}
+
+	annotations := accessor.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+
+	for key, value := range newAnnotations {
+		annotations[key] = value
+	}
+	for _, annotation := range removeAnnotations {
+		delete(annotations, annotation)
+	}
+	accessor.SetAnnotations(annotations)
+
+	/*
+		if len(resourceVersion) != 0 {
+			accessor.SetResourceVersion(resourceVersion)
+		}
+	*/
+	return nil
 }

@@ -19,30 +19,20 @@ type FimWatcher struct {
 
 // FimWatcherSpec is the spec for a FimWatcher resource
 type FimWatcherSpec struct {
-	// +optional
-	Template corev1.PodTemplateSpec `json:"template"`
-
 	Selector *metav1.LabelSelector `json:"selector" protobuf:"bytes,1,opt,name=selector"`
 	Subjects []FimWatcherSubject   `json:"subjects" protobuf:"bytes,2,opt,name=subjects"`
 }
 
 // FimWatcherSubject is the spec for a FimWatcherSubject resource
 type FimWatcherSubject struct {
-	Path   string   `json:"path" protobuf:"bytes,1,opt,name=path"`
+	Paths  []string `json:"paths" protobuf:"bytes,1,opt,name=paths"`
 	Events []string `json:"events" protobuf:"bytes,2,opt,name=events"`
 }
 
 // FimWatcherStatus is the status for a FimWatcher resource
 type FimWatcherStatus struct {
-	Subjects int32 `json:"subjects"`
-	// +optional
-	AvailableSubjects int32 `json:"availableSubjects"`
-	// +optional
-	ReadySubjects int32 `json:"readySubjects"`
+	ObservablePods string `json:"observablePods"`
 
-	// ObservedGeneration is the most recent generation observed by the controller.
-	// +optional
-	ObservedGeneration int64 `json:"observedGeneration"`
 	// +optional
 	Conditions []FimWatcherCondition `json:"conditions"`
 }
