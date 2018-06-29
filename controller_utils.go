@@ -4,12 +4,16 @@ import (
 	"fmt"
 	//"reflect"
 
-	//"github.com/golang/glog"
+	"github.com/golang/glog"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
+	//"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	//podutil "k8s.io/kubernetes/pkg/api/v1/pod"
-	"k8s.io/apimachinery/pkg/runtime"
+	//"k8s.io/apimachinery/pkg/runtime"
+	errorsutil "k8s.io/apimachinery/pkg/util/errors"
+	coreclient "k8s.io/client-go/kubernetes/typed/core/v1"
+	corelisters "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/util/retry"
 
 	fimv1alpha1 "clustergarage.io/fim-k8s/pkg/apis/fimcontroller/v1alpha1"
 	fimv1alpha1client "clustergarage.io/fim-k8s/pkg/client/clientset/versioned/typed/fimcontroller/v1alpha1"
@@ -39,7 +43,7 @@ func calculateStatus(fw *fimv1alpha1.FimWatcher, filteredPods []*corev1.Pod, man
 	observablePodsCount := 0
 	//templateLabel := labels.Set(fw.Spec.Selector).AsSelectorPreValidated()
 	for _, pod := range filteredPods {
-		if _, found := pod.GetAnnotations()[ObservableAnnotationKey]; found {
+		if _, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found {
 			observablePodsCount++
 		}
 		//if templateLabel.Matches(labels.Set(pod.Labels)) {
@@ -122,29 +126,51 @@ func filterOutCondition(conditions []fimv1alpha1.FimWatcherCondition, condType f
 	return newConditions
 }
 
-func updateAnnotations(removeAnnotations []string, newAnnotations map[string]string, obj runtime.Object) error {
-	accessor, err := meta.Accessor(obj)
-	if err != nil {
-		return err
-	}
+func updateAnnotations(removeAnnotations []string, newAnnotations map[string]string, pod *corev1.Pod) (*corev1.Pod, error) {
+	podCopy := pod.DeepCopy()
 
-	annotations := accessor.GetAnnotations()
+	annotations := podCopy.GetAnnotations()
 	if annotations == nil {
 		annotations = make(map[string]string)
 	}
-
 	for key, value := range newAnnotations {
 		annotations[key] = value
 	}
 	for _, annotation := range removeAnnotations {
 		delete(annotations, annotation)
 	}
-	accessor.SetAnnotations(annotations)
+	podCopy.ObjectMeta.Annotations = annotations
 
-	/*
-		if len(resourceVersion) != 0 {
-			accessor.SetResourceVersion(resourceVersion)
+	return podCopy, nil
+}
+
+type updatePodFunc func(pod *corev1.Pod) error
+
+// UpdatePodWithRetries updates a pod with given applyUpdate function.
+func updatePodWithRetries(podClient coreclient.PodInterface, podLister corelisters.PodLister, namespace, name string, applyUpdate updatePodFunc) (*corev1.Pod, error) {
+	var pod *corev1.Pod
+
+	retryErr := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var err error
+		pod, err = podLister.Pods(namespace).Get(name)
+		if err != nil {
+			return err
 		}
-	*/
-	return nil
+		pod = pod.DeepCopy()
+		// Apply the update, then attempt to push it to the apiserver.
+		if applyErr := applyUpdate(pod); applyErr != nil {
+			return applyErr
+		}
+		pod, err = podClient.Update(pod)
+		return err
+	})
+
+	// Ignore the precondition violated error, this pod is already updated
+	// with the desired label.
+	if retryErr == errorsutil.ErrPreconditionViolated {
+		glog.V(4).Infof("Pod %s/%s precondition doesn't hold, skip updating it.", namespace, name)
+		retryErr = nil
+	}
+
+	return pod, retryErr
 }

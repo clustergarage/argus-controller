@@ -42,7 +42,7 @@ const (
 	// is synced successfully
 	MessageResourceSynced = "FimWatcher synced successfully"
 
-	ObservableAnnotationKey = "fimcontroller.clustergarage.io/observable"
+	FimWatcherAnnotationKey = "fimcontroller.clustergarage.io/fim-watcher"
 
 	// The number of times we retry updating a FimWatcher's status.
 	statusUpdateRetries = 1
@@ -252,7 +252,7 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 	}
 
 	// check if pod already has annotation; no need to queue if so
-	if fw, found := pod.GetAnnotations()[ObservableAnnotationKey]; found {
+	if fw, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found {
 		fwKey, err := controller.KeyFunc(fw)
 		if err != nil {
 			return
@@ -475,11 +475,28 @@ func (fwc *FimWatcherController) processNextWorkItem() bool {
 func (fwc *FimWatcherController) manageObservers(rmPods []*corev1.Pod, addPods []*corev1.Pod, fw *fimv1alpha1.FimWatcher) error {
 	fmt.Println("     [manageObservers] ", len(rmPods), len(addPods))
 
+	var podsToUpdate []*corev1.Pod
 	for _, pod := range rmPods {
-		updateAnnotations([]string{ObservableAnnotationKey}, nil, pod)
+		updatedPod, err := updateAnnotations([]string{FimWatcherAnnotationKey}, nil, pod)
+		if err != nil {
+			return err
+		}
+		podsToUpdate = append(podsToUpdate, updatedPod)
 	}
 	for _, pod := range addPods {
-		updateAnnotations(nil, map[string]string{ObservableAnnotationKey: fw.Name}, pod)
+		updatedPod, err := updateAnnotations(nil, map[string]string{FimWatcherAnnotationKey: fw.Name}, pod)
+		if err != nil {
+			return err
+		}
+		podsToUpdate = append(podsToUpdate, updatedPod)
+	}
+
+	for _, updatedPod := range podsToUpdate {
+		updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(updatedPod.Namespace),
+			fwc.podLister, fw.Namespace, updatedPod.Name, func(po *corev1.Pod) error {
+				po.Annotations = updatedPod.Annotations
+				return nil
+			})
 	}
 
 	/*
@@ -622,13 +639,13 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 	var rmPods []*corev1.Pod
 	for _, pod := range filteredPods {
 		// if pod is still annotated with observable key
-		if _, found := pod.GetAnnotations()[ObservableAnnotationKey]; found {
+		if _, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found {
 			rmPods = append(rmPods, pod)
 		}
 	}
 	for _, pod := range selectedPods {
 		// if pod is not annotated with observable key
-		if _, found := pod.GetAnnotations()[ObservableAnnotationKey]; !found {
+		if _, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; !found {
 			addPods = append(addPods, pod)
 		}
 	}
