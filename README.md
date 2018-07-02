@@ -13,9 +13,6 @@ git clone git@github.com/clustergarage/fim-controller
 # save Godeps
 godep save ./...
 
-# build protobuf definitions
-protoc -I fimlet/ fimlet/fimlet.proto --go_out=plugins=grpc:fimlet
-
 # build kube-controller definitions
 ./bin/update-codegen.sh
 
