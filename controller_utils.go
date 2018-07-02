@@ -17,7 +17,9 @@ import (
 	fimv1alpha1client "clustergarage.io/fim-k8s/pkg/client/clientset/versioned/typed/fimcontroller/v1alpha1"
 )
 
-func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1alpha1.FimWatcher, newStatus fimv1alpha1.FimWatcherStatus) (*fimv1alpha1.FimWatcher, error) {
+func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1alpha1.FimWatcher,
+	newStatus fimv1alpha1.FimWatcherStatus) (*fimv1alpha1.FimWatcher, error) {
+
 	// NEVER modify objects from the store. It's a read-only, local cache.
 	// You can use DeepCopy() to make a deep copy of original object and modify this copy
 	// Or create a copy manually for better performance
@@ -148,7 +150,9 @@ func updateAnnotations(removeAnnotations []string, newAnnotations map[string]str
 type updatePodFunc func(pod *corev1.Pod) error
 
 // UpdatePodWithRetries updates a pod with given applyUpdate function.
-func updatePodWithRetries(podClient coreclient.PodInterface, podLister corelisters.PodLister, namespace, name string, applyUpdate updatePodFunc) (*corev1.Pod, error) {
+func updatePodWithRetries(podClient coreclient.PodInterface, podLister corelisters.PodLister,
+	namespace, name string, applyUpdate updatePodFunc) (*corev1.Pod, error) {
+
 	var pod *corev1.Pod
 
 	retryErr := retry.RetryOnConflict(retry.DefaultBackoff, func() error {

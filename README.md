@@ -1,6 +1,6 @@
 # fim-k8s
 
-## Cloning repo
+## Cloning Repository
 
 ```
 cd $GOPATH/src/clustergarage.io
@@ -40,11 +40,20 @@ spec:
     matchLabels:
       run: myapp
   subjects:
-  - path: /var/log/myapp
+  - paths:
+    - /var/log/myapp
     events:
+    - open
     - modify
-  - path: /var/log/financialdata
+  - paths:
+    - /var/log/financialdata
     events:
     - all
 ```
 
+
+## Running Locally
+
+```
+./bin/fim-controller -kubeconfig $HOME/.kube/config -log_dir ./log
+```

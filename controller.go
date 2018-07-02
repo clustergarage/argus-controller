@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"reflect"
-	"sort"
 	"time"
 
 	"github.com/golang/glog"
@@ -23,7 +22,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
-	//podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/controller"
 
 	fimv1alpha1 "clustergarage.io/fim-k8s/pkg/apis/fimcontroller/v1alpha1"
@@ -33,9 +31,9 @@ import (
 	listers "clustergarage.io/fim-k8s/pkg/client/listers/fimcontroller/v1alpha1"
 )
 
-const controllerAgentName = "fimcontroller"
-
 const (
+	controllerAgentName = "fimcontroller"
+
 	// SuccessSynced is used as part of the Event 'reason' when a FimWatcher is synced
 	SuccessSynced = "Synced"
 	// MessageResourceSynced is the message used for an Event fired when a FimWatcher
@@ -60,8 +58,8 @@ type FimWatcherController struct {
 	// fimclientset is a clientset for our own API group
 	fimclientset clientset.Interface
 
-	// A TTLCache of pod creates/deletes each rc expects to see.
-	expectations *controller.UIDTrackingControllerExpectations
+	// A TTLCache of pod creates/deletes each fw expects to see.
+	expectations controller.ControllerExpectationsInterface
 
 	// A store of FimWatchers, populated by the shared informer passed to NewFimWatcherController
 	fwLister listers.FimWatcherLister
@@ -105,7 +103,7 @@ func NewFimWatcherController(kubeclientset kubernetes.Interface, fimclientset cl
 		GroupVersionKind: appsv1.SchemeGroupVersion.WithKind("FimWatcher"),
 		kubeclientset:    kubeclientset,
 		fimclientset:     fimclientset,
-		expectations:     controller.NewUIDTrackingControllerExpectations(controller.NewControllerExpectations()),
+		expectations:     controller.NewControllerExpectations(),
 		fwLister:         fwInformer.Lister(),
 		fwListerSynced:   fwInformer.Informer().HasSynced,
 		podLister:        podInformer.Lister(),
@@ -272,6 +270,7 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 		return
 	}
 	glog.V(4).Infof("Unannotated pod %s found: %#v.", pod.Name, pod)
+	// @TODO: should this be an array or just this fw?
 	for _, fw := range fws {
 		fwc.enqueueFimWatcher(fw)
 	}
@@ -366,24 +365,21 @@ func (fwc *FimWatcherController) deletePod(obj interface{}) {
 		}
 	}
 
-	// @TODO: replace with annotation check
-
-	controllerRef := metav1.GetControllerOf(pod)
-	if controllerRef == nil {
-		// No controller should care about orphans being deleted.
-		return
+	if fwName, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found {
+		fw, err := fwc.fwLister.FimWatchers(pod.Namespace).Get(fwName)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		fwKey, err := controller.KeyFunc(fw)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		glog.V(4).Infof("Annotated pod %s/%s deleted through %v, timestamp %+v: %#v.", pod.Namespace, pod.Name, runtime.GetCaller(), pod.DeletionTimestamp, pod)
+		fwc.expectations.DeletionObserved(fwKey /*, controller.PodKey(pod)*/)
+		fwc.enqueueFimWatcher(fw)
 	}
-	fw := fwc.resolveControllerRef(pod.Namespace, controllerRef)
-	if fw == nil {
-		return
-	}
-	fwKey, err := controller.KeyFunc(fw)
-	if err != nil {
-		return
-	}
-	glog.V(4).Infof("Pod %s/%s deleted through %v, timestamp %+v: %#v.", pod.Namespace, pod.Name, runtime.GetCaller(), pod.DeletionTimestamp, pod)
-	fwc.expectations.DeletionObserved(fwKey, controller.PodKey(pod))
-	fwc.enqueueFimWatcher(fw)
 }
 
 // enqueueFimWatcher takes a FimWatcher resource and converts it into a namespace/name
@@ -470,20 +466,51 @@ func (fwc *FimWatcherController) processNextWorkItem() bool {
 	return true
 }
 
-// manageObservers checks and updates observers for the given FimWatcher.
+// manageObserverPods checks and updates observers for the given FimWatcher.
 // It will requeue the fim watcher in case of an error while creating/deleting pods.
-func (fwc *FimWatcherController) manageObservers(rmPods []*corev1.Pod, addPods []*corev1.Pod, fw *fimv1alpha1.FimWatcher) error {
-	fmt.Println("     [manageObservers] ", len(rmPods), len(addPods))
+func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPods []*corev1.Pod, fw *fimv1alpha1.FimWatcher) error {
+	fmt.Println("     [manageObserverPods] ", "rm:", len(rmPods), "| add:", len(addPods))
+
+	fwKey, err := controller.KeyFunc(fw)
+	if err != nil {
+		runtime.HandleError(fmt.Errorf("Couldn't get key for %v %#v: %v", fwc.Kind, fw, err))
+		return nil
+	}
+
+	if len(rmPods) > 0 {
+		fwc.expectations.ExpectDeletions(fwKey, len(rmPods))
+		glog.V(2).Infof("Too many subjects for %v %s/%s, need %d, deleting %d", fwc.Kind, fw.Namespace, fw.Name, len(fw.Spec.Subjects), len(rmPods))
+	}
+	if len(addPods) > 0 {
+		fwc.expectations.ExpectCreations(fwKey, len(addPods))
+		glog.V(2).Infof("Too few subjects for %v %s/%s, need %d, creating %d", fwc.Kind, fw.Namespace, fw.Name, len(fw.Spec.Subjects), len(addPods))
+	}
 
 	var podsToUpdate []*corev1.Pod
 	for _, pod := range rmPods {
+		if pod.DeletionTimestamp != nil {
+			// @TODO: send gRPC signal to [rm]
+			if len(pod.Status.ContainerStatuses) > 0 {
+				cid := pod.Status.ContainerStatuses[0].ContainerID
+				fmt.Println("        [gRPC] RM:", cid)
+			}
+		}
+
 		err := updateAnnotations([]string{FimWatcherAnnotationKey}, nil, pod)
 		if err != nil {
 			return err
 		}
 		podsToUpdate = append(podsToUpdate, pod)
 	}
+
 	for _, pod := range addPods {
+		// @TODO: send gRPC signal to [add]
+		// this may have to be done on updatePod, since we need to give it some time to quiesce
+		if len(pod.Status.ContainerStatuses) > 0 {
+			cid := pod.Status.ContainerStatuses[0].ContainerID
+			fmt.Println("        [gRPC] ADD:", cid)
+		}
+
 		err := updateAnnotations(nil, map[string]string{FimWatcherAnnotationKey: fw.Name}, pod)
 		if err != nil {
 			return err
@@ -492,82 +519,12 @@ func (fwc *FimWatcherController) manageObservers(rmPods []*corev1.Pod, addPods [
 	}
 
 	for _, pod := range podsToUpdate {
-		updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(pod.Namespace),
-			fwc.podLister, fw.Namespace, pod.Name, func(po *corev1.Pod) error {
+		updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(pod.Namespace), fwc.podLister,
+			fw.Namespace, pod.Name, func(po *corev1.Pod) error {
 				po.Annotations = pod.Annotations
 				return nil
 			})
 	}
-
-	/*
-		diff := len(filteredPods) - int(fw.Status.Subjects)
-		fwKey, err := controller.KeyFunc(fw)
-		if err != nil {
-			runtime.HandleError(fmt.Errorf("Couldn't get key for %v %#v: %v", fwc.Kind, fw, err))
-			return nil
-		}
-		if diff < 0 {
-			diff *= -1
-			// TODO: Track UIDs of creates just like deletes. The problem currently
-			// is we'd need to wait on the result of a create to record the pod's
-			// UID, which would require locking *across* the create, which will turn
-			// into a performance bottleneck. We should generate a UID for the pod
-			// beforehand and store it via ExpectCreations.
-			fwc.expectations.ExpectCreations(fwKey, diff)
-			glog.V(2).Infof("Too few subjects for %v %s/%s, need %d, creating %d", fwc.Kind, fw.Namespace, fw.Name, len(fw.Spec.Subjects), diff)
-
-			// Any skipped pods that we never attempted to start shouldn't be expected.
-			// The skipped pods will be retried later. The next controller resync will
-			// retry the slow start process.
-			if skippedPods := diff - successfulCreations; skippedPods > 0 {
-				glog.V(2).Infof("Slow-start failure. Skipping creation of %d pods, decrementing expectations for %v %v/%v", skippedPods, fwc.Kind, fw.Namespace, fw.Name)
-				for i := 0; i < skippedPods; i++ {
-					// Decrement the expected number of creates because the informer won't observe this pod
-					fwc.expectations.CreationObserved(fwKey)
-				}
-			}
-			return err
-		} else if diff > 0 {
-			glog.V(2).Infof("Too many subjects for %v %s/%s, need %d, deleting %d", fwc.Kind, fw.Namespace, fw.Name, len(fw.Spec.Subjects), diff)
-
-			// Choose which Pods to delete, preferring those in earlier phases of startup.
-			podsToDelete := getPodsToDelete(filteredPods, diff)
-
-			// Snapshot the UIDs (ns/name) of the pods we're expecting to see
-			// deleted, so we know to record their expectations exactly once either
-			// when we see it as an update of the deletion timestamp, or as a delete.
-			// Note that if the labels on a pod/fw change in a way that the pod gets
-			// orphaned, the fw will only wake up after the expectations have
-			// expired even if other pods are deleted.
-			fwc.expectations.ExpectDeletions(fwKey, getPodKeys(podsToDelete))
-
-			errCh := make(chan error, diff)
-			var wg sync.WaitGroup
-			wg.Add(diff)
-			for _, pod := range podsToDelete {
-				go func(targetPod *v1.Pod) {
-					defer wg.Done()
-					if err := fwc.podControl.DeletePod(fw.Namespace, targetPod.Name, fw); err != nil {
-						// Decrement the expected number of deletes because the informer won't observe this deletion
-						podKey := controller.PodKey(targetPod)
-						glog.V(2).Infof("Failed to delete %v, decrementing expectations for %v %s/%s", podKey, fwc.Kind, fw.Namespace, fw.Name)
-						fwc.expectations.DeletionObserved(fwKey, podKey)
-						errCh <- err
-					}
-				}(pod)
-			}
-			wg.Wait()
-
-			select {
-			case err := <-errCh:
-				// all errors have been reported before and they're likely to be the same, so we'll only return the first one we hit.
-				if err != nil {
-					return err
-				}
-			default:
-			}
-		}
-	*/
 
 	return nil
 }
@@ -596,6 +553,7 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 		// The FimWatcher resource may no longer exist, in which case we stop
 		// processing.
 		if errors.IsNotFound(err) {
+			// @TODO: cleanup: delete annotations from any pods that have them
 			runtime.HandleError(fmt.Errorf("FimWatcher '%s' in work queue no longer exists", key))
 			return nil
 		}
@@ -622,21 +580,23 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 
 	// get the diff between all pods and selected pods
 	var filteredPods []*corev1.Pod
-	for _, p0 := range allPods {
+	for _, pod := range allPods {
 		var found bool
-		for _, p1 := range selectedPods {
-			if p0 == p1 {
+		for _, po := range selectedPods {
+			if pod == po {
 				found = true
 				break
 			}
 		}
-		if !found {
-			filteredPods = append(filteredPods, p0)
+		// if pod is currently being destroyed
+		// or no longer found in selected pods
+		if pod.DeletionTimestamp != nil || !found {
+			filteredPods = append(filteredPods, pod)
 		}
 	}
 
-	var addPods []*corev1.Pod
 	var rmPods []*corev1.Pod
+	var addPods []*corev1.Pod
 	for _, pod := range filteredPods {
 		// if pod is still annotated with observable key
 		if _, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found {
@@ -644,6 +604,7 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 		}
 	}
 	for _, pod := range selectedPods {
+		// @TODO: check if annotation also == fw.Name ?
 		// if pod is not annotated with observable key
 		if _, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; !found {
 			addPods = append(addPods, pod)
@@ -652,8 +613,9 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 
 	var manageSubjectsErr error
 	if fwNeedsSync && fw.DeletionTimestamp == nil {
-		manageSubjectsErr = fwc.manageObservers(rmPods, addPods, fw)
+		manageSubjectsErr = fwc.manageObserverPods(rmPods, addPods, fw)
 	}
+
 	fw = fw.DeepCopy()
 	newStatus := calculateStatus(fw, selectedPods, manageSubjectsErr)
 
@@ -672,24 +634,4 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 	fwc.recorder.Event(fw, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
 
 	return manageSubjectsErr
-}
-
-func getPodsToDelete(filteredPods []*corev1.Pod, diff int) []*corev1.Pod {
-	// No need to sort pods if we are about to delete all of them.
-	// diff will always be <= len(filteredPods), so not need to handle > case.
-	if diff < len(filteredPods) {
-		// Sort the pods in the order such that not-ready < ready, unscheduled
-		// < scheduled, and pending < running. This ensures that we delete pods
-		// in the earlier stages whenever possible.
-		sort.Sort(controller.ActivePods(filteredPods))
-	}
-	return filteredPods[:diff]
-}
-
-func getPodKeys(pods []*corev1.Pod) []string {
-	podKeys := make([]string, 0, len(pods))
-	for _, pod := range pods {
-		podKeys = append(podKeys, controller.PodKey(pod))
-	}
-	return podKeys
 }
