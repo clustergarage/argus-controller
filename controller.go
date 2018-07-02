@@ -284,7 +284,7 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 func (fwc *FimWatcherController) updatePod(old, new interface{}) {
 	newPod := new.(*corev1.Pod)
 	oldPod := old.(*corev1.Pod)
-	fmt.Println(" [updatePod] ", oldPod.Name, newPod.Name)
+	//fmt.Println(" [updatePod] ", oldPod.Name, newPod.Name)
 
 	if newPod.ResourceVersion == oldPod.ResourceVersion {
 		// Periodic resync will send update events for all known pods.
