@@ -3,7 +3,7 @@
 package versioned
 
 import (
-	fimcontrollerv1alpha1 "clustergarage.io/fim-k8s/pkg/client/clientset/versioned/typed/fimcontroller/v1alpha1"
+	fimcontrollerv1alpha1 "clustergarage.io/fim-controller/pkg/client/clientset/versioned/typed/fimcontroller/v1alpha1"
 	discovery "k8s.io/client-go/discovery"
 	rest "k8s.io/client-go/rest"
 	flowcontrol "k8s.io/client-go/util/flowcontrol"

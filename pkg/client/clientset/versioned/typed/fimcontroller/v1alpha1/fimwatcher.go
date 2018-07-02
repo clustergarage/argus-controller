@@ -3,8 +3,8 @@
 package v1alpha1
 
 import (
-	v1alpha1 "clustergarage.io/fim-k8s/pkg/apis/fimcontroller/v1alpha1"
-	scheme "clustergarage.io/fim-k8s/pkg/client/clientset/versioned/scheme"
+	v1alpha1 "clustergarage.io/fim-controller/pkg/apis/fimcontroller/v1alpha1"
+	scheme "clustergarage.io/fim-controller/pkg/client/clientset/versioned/scheme"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
 	watch "k8s.io/apimachinery/pkg/watch"

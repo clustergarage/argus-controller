@@ -3,8 +3,8 @@
 package fimcontroller
 
 import (
-	v1alpha1 "clustergarage.io/fim-k8s/pkg/client/informers/externalversions/fimcontroller/v1alpha1"
-	internalinterfaces "clustergarage.io/fim-k8s/pkg/client/informers/externalversions/internalinterfaces"
+	v1alpha1 "clustergarage.io/fim-controller/pkg/client/informers/externalversions/fimcontroller/v1alpha1"
+	internalinterfaces "clustergarage.io/fim-controller/pkg/client/informers/externalversions/internalinterfaces"
 )
 
 // Interface provides access to each of this group's versions.

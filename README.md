@@ -1,10 +1,10 @@
-# fim-k8s
+# fim-controller
 
 ## Cloning Repository
 
 ```
 cd $GOPATH/src/clustergarage.io
-git clone git@github.com/clustergarage/fim-k8s
+git clone git@github.com/clustergarage/fim-controller
 ```
 
 ## Building
@@ -26,7 +26,7 @@ go bin -o bin/fim-controller .
 ## Preparing CustomResourceDefinitions
 
 ```
-kubectl apply -f configs/fim-k8s-crd.yaml
+kubectl apply -f configs/fim-controller.yaml
 ```
 
 ## Defining a FimWatcher component

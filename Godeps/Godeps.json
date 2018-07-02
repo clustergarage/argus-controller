@@ -1,5 +1,5 @@
 {
-	"ImportPath": "clustergarage.io/fim-k8s",
+	"ImportPath": "clustergarage.io/fim-controller",
 	"GoVersion": "go1.10",
 	"GodepVersion": "v80",
 	"Packages": [

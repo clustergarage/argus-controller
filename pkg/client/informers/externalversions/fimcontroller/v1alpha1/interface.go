@@ -3,7 +3,7 @@
 package v1alpha1
 
 import (
-	internalinterfaces "clustergarage.io/fim-k8s/pkg/client/informers/externalversions/internalinterfaces"
+	internalinterfaces "clustergarage.io/fim-controller/pkg/client/informers/externalversions/internalinterfaces"
 )
 
 // Interface provides access to all the informers in this group version.

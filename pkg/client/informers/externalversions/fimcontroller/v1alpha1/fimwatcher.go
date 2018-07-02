@@ -5,10 +5,10 @@ package v1alpha1
 import (
 	time "time"
 
-	fimcontroller_v1alpha1 "clustergarage.io/fim-k8s/pkg/apis/fimcontroller/v1alpha1"
-	versioned "clustergarage.io/fim-k8s/pkg/client/clientset/versioned"
-	internalinterfaces "clustergarage.io/fim-k8s/pkg/client/informers/externalversions/internalinterfaces"
-	v1alpha1 "clustergarage.io/fim-k8s/pkg/client/listers/fimcontroller/v1alpha1"
+	fimcontroller_v1alpha1 "clustergarage.io/fim-controller/pkg/apis/fimcontroller/v1alpha1"
+	versioned "clustergarage.io/fim-controller/pkg/client/clientset/versioned"
+	internalinterfaces "clustergarage.io/fim-controller/pkg/client/informers/externalversions/internalinterfaces"
+	v1alpha1 "clustergarage.io/fim-controller/pkg/client/listers/fimcontroller/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"

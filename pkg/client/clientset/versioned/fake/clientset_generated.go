@@ -3,9 +3,9 @@
 package fake
 
 import (
-	clientset "clustergarage.io/fim-k8s/pkg/client/clientset/versioned"
-	fimcontrollerv1alpha1 "clustergarage.io/fim-k8s/pkg/client/clientset/versioned/typed/fimcontroller/v1alpha1"
-	fakefimcontrollerv1alpha1 "clustergarage.io/fim-k8s/pkg/client/clientset/versioned/typed/fimcontroller/v1alpha1/fake"
+	clientset "clustergarage.io/fim-controller/pkg/client/clientset/versioned"
+	fimcontrollerv1alpha1 "clustergarage.io/fim-controller/pkg/client/clientset/versioned/typed/fimcontroller/v1alpha1"
+	fakefimcontrollerv1alpha1 "clustergarage.io/fim-controller/pkg/client/clientset/versioned/typed/fimcontroller/v1alpha1/fake"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/discovery"

@@ -26,11 +26,11 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/kubernetes/pkg/controller"
 
-	fimv1alpha1 "clustergarage.io/fim-k8s/pkg/apis/fimcontroller/v1alpha1"
-	clientset "clustergarage.io/fim-k8s/pkg/client/clientset/versioned"
-	fimscheme "clustergarage.io/fim-k8s/pkg/client/clientset/versioned/scheme"
-	informers "clustergarage.io/fim-k8s/pkg/client/informers/externalversions/fimcontroller/v1alpha1"
-	listers "clustergarage.io/fim-k8s/pkg/client/listers/fimcontroller/v1alpha1"
+	fimv1alpha1 "clustergarage.io/fim-controller/pkg/apis/fimcontroller/v1alpha1"
+	clientset "clustergarage.io/fim-controller/pkg/client/clientset/versioned"
+	fimscheme "clustergarage.io/fim-controller/pkg/client/clientset/versioned/scheme"
+	informers "clustergarage.io/fim-controller/pkg/client/informers/externalversions/fimcontroller/v1alpha1"
+	listers "clustergarage.io/fim-controller/pkg/client/listers/fimcontroller/v1alpha1"
 )
 
 const (

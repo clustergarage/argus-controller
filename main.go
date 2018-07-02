@@ -9,9 +9,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
-	clientset "clustergarage.io/fim-k8s/pkg/client/clientset/versioned"
-	informers "clustergarage.io/fim-k8s/pkg/client/informers/externalversions"
-	"clustergarage.io/fim-k8s/pkg/signals"
+	clientset "clustergarage.io/fim-controller/pkg/client/clientset/versioned"
+	informers "clustergarage.io/fim-controller/pkg/client/informers/externalversions"
+	"clustergarage.io/fim-controller/pkg/signals"
 )
 
 var (
