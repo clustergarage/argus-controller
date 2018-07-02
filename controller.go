@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"time"
@@ -8,7 +9,7 @@ import (
 	"github.com/golang/glog"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	errorsutil "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -21,6 +22,7 @@ import (
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/kubernetes/pkg/controller"
 
@@ -40,7 +42,9 @@ const (
 	// is synced successfully
 	MessageResourceSynced = "FimWatcher synced successfully"
 
-	FimWatcherAnnotationKey = "fimcontroller.clustergarage.io/fim-watcher"
+	FimAnnotationKeyPrefix  = "fimcontroller.clustergarage.io/"
+	FimWatcherAnnotationKey = FimAnnotationKeyPrefix + "fim-watcher"
+	FimdURIAnnotationKey    = FimAnnotationKeyPrefix + "fimd-uri"
 
 	// The number of times we retry updating a FimWatcher's status.
 	statusUpdateRetries = 1
@@ -239,7 +243,6 @@ func (fwc *FimWatcherController) updateFimWatcher(old, new interface{}) {
 // When a pod is created, enqueue the fim watcher that manages it and update its expectations.
 func (fwc *FimWatcherController) addPod(obj interface{}) {
 	pod := obj.(*corev1.Pod)
-	//cid := pod.Status.ContainerStatuses[0].ContainerID
 	fmt.Println(" [addPod] ", pod.Name)
 
 	if pod.DeletionTimestamp != nil {
@@ -255,8 +258,8 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 		if err != nil {
 			return
 		}
-		glog.V(4).Infof("Annotated pod %s found: %#v.", pod.Name, pod)
 		fwc.expectations.CreationObserved(fwKey)
+		glog.V(4).Infof("Annotated pod %s found: %#v.", pod.Name, pod)
 		fwc.enqueueFimWatcher(fw)
 		return
 	}
@@ -270,7 +273,6 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 		return
 	}
 	glog.V(4).Infof("Unannotated pod %s found: %#v.", pod.Name, pod)
-	// @TODO: should this be an array or just this fw?
 	for _, fw := range fws {
 		fwc.enqueueFimWatcher(fw)
 	}
@@ -304,41 +306,6 @@ func (fwc *FimWatcherController) updatePod(old, new interface{}) {
 		}
 		return
 	}
-
-	// @TODO: replace with annotation check
-
-	newControllerRef := metav1.GetControllerOf(newPod)
-	oldControllerRef := metav1.GetControllerOf(oldPod)
-	controllerRefChanged := !reflect.DeepEqual(newControllerRef, oldControllerRef)
-	if controllerRefChanged && oldControllerRef != nil {
-		// The ControllerRef was changed. Sync the old controller, if any.
-		if fw := fwc.resolveControllerRef(oldPod.Namespace, oldControllerRef); fw != nil {
-			fwc.enqueueFimWatcher(fw)
-		}
-	}
-
-	// If it has a ControllerRef, that's all that matters.
-	if newControllerRef != nil {
-		fw := fwc.resolveControllerRef(newPod.Namespace, newControllerRef)
-		if fw == nil {
-			return
-		}
-		glog.V(4).Infof("Pod %s updated, objectMeta %+v -> %+v.", newPod.Name, oldPod.ObjectMeta, newPod.ObjectMeta)
-		return
-	}
-
-	// Otherwise, it's an orphan. If anything changed, sync matching controllers
-	// to see if anyone wants to adopt it now.
-	if labelChanged || controllerRefChanged {
-		fws := fwc.getPodFimWatchers(newPod)
-		if len(fws) == 0 {
-			return
-		}
-		glog.V(4).Infof("Orphan Pod %s updated, objectMeta %+v -> %+v.", newPod.Name, oldPod.ObjectMeta, newPod.ObjectMeta)
-		for _, fw := range fws {
-			fwc.enqueueFimWatcher(fw)
-		}
-	}
 }
 
 // When a pod is deleted, enqueue the replica set that manages the pod and update its expectations.
@@ -368,16 +335,14 @@ func (fwc *FimWatcherController) deletePod(obj interface{}) {
 	if fwName, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found {
 		fw, err := fwc.fwLister.FimWatchers(pod.Namespace).Get(fwName)
 		if err != nil {
-			fmt.Println(err)
 			return
 		}
 		fwKey, err := controller.KeyFunc(fw)
 		if err != nil {
-			fmt.Println(err)
 			return
 		}
 		glog.V(4).Infof("Annotated pod %s/%s deleted through %v, timestamp %+v: %#v.", pod.Namespace, pod.Name, runtime.GetCaller(), pod.DeletionTimestamp, pod)
-		fwc.expectations.DeletionObserved(fwKey /*, controller.PodKey(pod)*/)
+		fwc.expectations.DeletionObserved(fwKey)
 		fwc.enqueueFimWatcher(fw)
 	}
 }
@@ -488,15 +453,13 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 
 	var podsToUpdate []*corev1.Pod
 	for _, pod := range rmPods {
-		if pod.DeletionTimestamp != nil {
-			// @TODO: send gRPC signal to [rm]
-			if len(pod.Status.ContainerStatuses) > 0 {
-				cid := pod.Status.ContainerStatuses[0].ContainerID
-				fmt.Println("        [gRPC] RM:", cid)
+		if _, found := pod.GetAnnotations()[FimdURIAnnotationKey]; found {
+			if cid := getPodContainerID(pod); cid != "" {
+				// @TODO: send gRPC signal to [rm]
+				fmt.Println(" ### [gRPC] RM:", cid)
 			}
 		}
-
-		err := updateAnnotations([]string{FimWatcherAnnotationKey}, nil, pod)
+		err := updateAnnotations([]string{FimWatcherAnnotationKey, FimdURIAnnotationKey}, nil, pod)
 		if err != nil {
 			return err
 		}
@@ -504,12 +467,47 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 	}
 
 	for _, pod := range addPods {
-		// @TODO: send gRPC signal to [add]
-		// this may have to be done on updatePod, since we need to give it some time to quiesce
-		if len(pod.Status.ContainerStatuses) > 0 {
-			cid := pod.Status.ContainerStatuses[0].ContainerID
-			fmt.Println("        [gRPC] ADD:", cid)
-		}
+		// @TODO: split this out
+		go func(po *corev1.Pod) {
+			var cid string
+			rs := schema.GroupResource{Resource: "pods"}
+			retry.RetryOnConflict(wait.Backoff{
+				Steps:    10,
+				Duration: 1 * time.Second,
+				Factor:   2.0,
+				Jitter:   0.1,
+			}, func() error {
+				var err error
+				po, err := fwc.podLister.Pods(fw.Namespace).Get(po.Name)
+				if err != nil {
+					return err
+				}
+				if len(po.Status.ContainerStatuses) == 0 {
+					err = errorsutil.NewConflict(rs, po.Name, errors.New("container statuses length"))
+					return err
+				}
+				if po.Status.ContainerStatuses[0].ContainerID == "" {
+					err = errorsutil.NewConflict(rs, po.Name, errors.New("container id"))
+					return err
+				}
+				cid = po.Status.ContainerStatuses[0].ContainerID
+				return err
+			})
+
+			// @TODO: send gRPC signal to [add]
+			if cid != "" {
+				fmt.Println(" ### [gRPC] ADD:", cid)
+				err := updateAnnotations(nil, map[string]string{FimdURIAnnotationKey: "/foo/bar"}, po)
+				if err != nil {
+					return
+				}
+				updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(pod.Namespace), fwc.podLister,
+					fw.Namespace, po.Name, func(p *corev1.Pod) error {
+						p.Annotations = po.Annotations
+						return nil
+					})
+			}
+		}(pod)
 
 		err := updateAnnotations(nil, map[string]string{FimWatcherAnnotationKey: fw.Name}, pod)
 		if err != nil {
@@ -552,7 +550,7 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 	if err != nil {
 		// The FimWatcher resource may no longer exist, in which case we stop
 		// processing.
-		if errors.IsNotFound(err) {
+		if errorsutil.IsNotFound(err) {
 			// @TODO: cleanup: delete annotations from any pods that have them
 			runtime.HandleError(fmt.Errorf("FimWatcher '%s' in work queue no longer exists", key))
 			return nil
@@ -604,6 +602,9 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 		}
 	}
 	for _, pod := range selectedPods {
+		if pod.DeletionTimestamp != nil {
+			continue
+		}
 		// @TODO: check if annotation also == fw.Name ?
 		// if pod is not annotated with observable key
 		if _, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; !found {
@@ -612,7 +613,9 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 	}
 
 	var manageSubjectsErr error
-	if fwNeedsSync && fw.DeletionTimestamp == nil {
+	if (fwNeedsSync && fw.DeletionTimestamp == nil) ||
+		len(rmPods) > 0 ||
+		len(addPods) > 0 {
 		manageSubjectsErr = fwc.manageObserverPods(rmPods, addPods, fw)
 	}
 

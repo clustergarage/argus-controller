@@ -179,3 +179,10 @@ func updatePodWithRetries(podClient coreclient.PodInterface, podLister coreliste
 
 	return pod, retryErr
 }
+
+func getPodContainerID(pod *corev1.Pod) string {
+	if len(pod.Status.ContainerStatuses) == 0 {
+		return ""
+	}
+	return pod.Status.ContainerStatuses[0].ContainerID
+}
