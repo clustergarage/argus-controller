@@ -31,6 +31,7 @@ import (
 	fimscheme "clustergarage.io/fim-controller/pkg/client/clientset/versioned/scheme"
 	informers "clustergarage.io/fim-controller/pkg/client/informers/externalversions/fimcontroller/v1alpha1"
 	listers "clustergarage.io/fim-controller/pkg/client/listers/fimcontroller/v1alpha1"
+	pb "clustergarage.io/fim-proto/fim"
 )
 
 const (
@@ -455,8 +456,7 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 	for _, pod := range rmPods {
 		if _, found := pod.GetAnnotations()[FimdURIAnnotationKey]; found {
 			if cid := getPodContainerID(pod); cid != "" {
-				// @TODO: send gRPC signal to [rm]
-				fmt.Println(" ### [gRPC] RM:", cid)
+				removeFimdWatcher(pod, cid)
 			}
 		}
 		err := updateAnnotations([]string{FimWatcherAnnotationKey, FimdURIAnnotationKey}, nil, pod)
@@ -465,49 +465,8 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 		}
 		podsToUpdate = append(podsToUpdate, pod)
 	}
-
 	for _, pod := range addPods {
-		// @TODO: split this out
-		go func(po *corev1.Pod) {
-			var cid string
-			rs := schema.GroupResource{Resource: "pods"}
-			retry.RetryOnConflict(wait.Backoff{
-				Steps:    10,
-				Duration: 1 * time.Second,
-				Factor:   2.0,
-				Jitter:   0.1,
-			}, func() error {
-				var err error
-				po, err := fwc.podLister.Pods(fw.Namespace).Get(po.Name)
-				if err != nil {
-					return err
-				}
-				if len(po.Status.ContainerStatuses) == 0 {
-					err = errorsutil.NewConflict(rs, po.Name, errors.New("container statuses length"))
-					return err
-				}
-				if po.Status.ContainerStatuses[0].ContainerID == "" {
-					err = errorsutil.NewConflict(rs, po.Name, errors.New("container id"))
-					return err
-				}
-				cid = po.Status.ContainerStatuses[0].ContainerID
-				return err
-			})
-
-			// @TODO: send gRPC signal to [add]
-			if cid != "" {
-				fmt.Println(" ### [gRPC] ADD:", cid)
-				err := updateAnnotations(nil, map[string]string{FimdURIAnnotationKey: "/foo/bar"}, po)
-				if err != nil {
-					return
-				}
-				updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(pod.Namespace), fwc.podLister,
-					fw.Namespace, po.Name, func(p *corev1.Pod) error {
-						p.Annotations = po.Annotations
-						return nil
-					})
-			}
-		}(pod)
+		go fwc.updatePodOnceValid(pod, fw)
 
 		err := updateAnnotations(nil, map[string]string{FimWatcherAnnotationKey: fw.Name}, pod)
 		if err != nil {
@@ -637,4 +596,70 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 	fwc.recorder.Event(fw, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
 
 	return manageSubjectsErr
+}
+
+func (fwc *FimWatcherController) updatePodOnceValid(po *corev1.Pod, fw *fimv1alpha1.FimWatcher) {
+	var cid, hostIP string
+	retry.RetryOnConflict(wait.Backoff{
+		// @TODO: evaluate these values
+		Steps:    10,
+		Duration: 1 * time.Second,
+		Factor:   2.0,
+		Jitter:   0.1,
+	}, func() error {
+		var err error
+		po, err := fwc.podLister.Pods(fw.Namespace).Get(po.Name)
+		if err != nil {
+			return err
+		}
+
+		if po.Spec.NodeName == "" || po.Status.HostIP == "" {
+			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
+				po.Name, errors.New("host name/ip not available"))
+			return err
+		}
+
+		// @TODO: this is assuming a single container per pod
+		// eventually need to look up via podutil.GetContainerStatus(...)
+		if len(po.Status.ContainerStatuses) == 0 ||
+			po.Status.ContainerStatuses[0].ContainerID == "" {
+			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
+				po.Name, errors.New("container id not available"))
+			return err
+		}
+
+		cid = po.Status.ContainerStatuses[0].ContainerID
+		hostIP = po.Status.HostIP
+		return err
+	})
+
+	if cid == "" {
+		return
+	}
+
+	var subjects []*pb.FimWatcherSubject
+	for _, s := range fw.Spec.Subjects {
+		subjects = append(subjects, &pb.FimWatcherSubject{
+			Paths:  s.Paths,
+			Events: s.Events,
+		})
+	}
+
+	if hostIP != "" {
+		addFimdWatcher(hostIP, &pb.FimdConfig{
+			ContainerId: cid,
+			Subjects:    subjects,
+			//fw.Spec.Subjects,
+		})
+	}
+
+	err := updateAnnotations(nil, map[string]string{FimdURIAnnotationKey: "/foo/bar"}, po)
+	if err != nil {
+		return
+	}
+	updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(po.Namespace), fwc.podLister,
+		fw.Namespace, po.Name, func(p *corev1.Pod) error {
+			p.Annotations = po.Annotations
+			return nil
+		})
 }

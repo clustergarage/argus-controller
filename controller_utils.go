@@ -2,11 +2,13 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/golang/glog"
+	"golang.org/x/net/context"
+	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	errorsutil "k8s.io/apimachinery/pkg/util/errors"
 	coreclient "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -15,6 +17,7 @@ import (
 
 	fimv1alpha1 "clustergarage.io/fim-controller/pkg/apis/fimcontroller/v1alpha1"
 	fimv1alpha1client "clustergarage.io/fim-controller/pkg/client/clientset/versioned/typed/fimcontroller/v1alpha1"
+	pb "clustergarage.io/fim-proto/fim"
 )
 
 func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1alpha1.FimWatcher,
@@ -41,89 +44,14 @@ func calculateStatus(fw *fimv1alpha1.FimWatcher, filteredPods []*corev1.Pod, man
 	// a superset of the selector of the replica set, so the possible
 	// matching pods must be part of the filteredPods.
 	observablePodsCount := 0
-	//templateLabel := labels.Set(fw.Spec.Selector).AsSelectorPreValidated()
 	for _, pod := range filteredPods {
 		if _, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found {
 			observablePodsCount++
 		}
-		//if templateLabel.Matches(labels.Set(pod.Labels)) {
-		//	observablePodsCount++
-		//}
-		//if podutil.IsPodReady(pod) {
-		//	readyReplicasCount++
-		//	if podutil.IsPodAvailable(pod, rs.Spec.MinReadySeconds, metav1.Now()) {
-		//		availableReplicasCount++
-		//	}
-		//}
 	}
-
-	/*
-		failureCond := GetCondition(fw.Status, fimv1alpha1.FimWatcherSubjectFailure)
-		if manageFimWatchersErr != nil && failureCond == nil {
-			var reason string
-			if diff := len(filteredPods) - len(fw.Spec.Subjects); diff < 0 {
-				reason = "FailedCreate"
-			} else if diff > 0 {
-				reason = "FailedDelete"
-			}
-			cond := NewFimWatcherCondition(fimv1alpha1.FimWatcherSubjectFailure, corev1.ConditionTrue, reason, manageFimWatchersErr.Error())
-			SetCondition(&newStatus, cond)
-		} else if manageFimWatchersErr == nil && failureCond != nil {
-			RemoveCondition(&newStatus, fimv1alpha1.FimWatcherSubjectFailure)
-		}
-	*/
 
 	newStatus.ObservablePods = fmt.Sprintf("%d (%d subjects)", int32(observablePodsCount), int32(observablePodsCount*len(fw.Spec.Subjects)))
 	return newStatus
-}
-
-// NewFimWatcherCondition creates a new fim watcher condition.
-func NewFimWatcherCondition(condType fimv1alpha1.FimWatcherConditionType, status corev1.ConditionStatus, reason, msg string) fimv1alpha1.FimWatcherCondition {
-	return fimv1alpha1.FimWatcherCondition{
-		Type:               condType,
-		Status:             status,
-		LastTransitionTime: metav1.Now(),
-		Reason:             reason,
-		Message:            msg,
-	}
-}
-
-// GetCondition returns a fim watcher condition with the provided type if it exists.
-func GetCondition(status fimv1alpha1.FimWatcherStatus, condType fimv1alpha1.FimWatcherConditionType) *fimv1alpha1.FimWatcherCondition {
-	for _, c := range status.Conditions {
-		if c.Type == condType {
-			return &c
-		}
-	}
-	return nil
-}
-
-// SetCondition adds/replaces the given condition in the fim watcher status. If the condition that we
-// are about to add already exists and has the same status and reason then we are not going to update.
-func SetCondition(status *fimv1alpha1.FimWatcherStatus, condition fimv1alpha1.FimWatcherCondition) {
-	currentCond := GetCondition(*status, condition.Type)
-	if currentCond != nil && currentCond.Status == condition.Status && currentCond.Reason == condition.Reason {
-		return
-	}
-	newConditions := filterOutCondition(status.Conditions, condition.Type)
-	status.Conditions = append(newConditions, condition)
-}
-
-// RemoveCondition removes the condition with the provided type from the fim watcher status.
-func RemoveCondition(status *fimv1alpha1.FimWatcherStatus, condType fimv1alpha1.FimWatcherConditionType) {
-	status.Conditions = filterOutCondition(status.Conditions, condType)
-}
-
-// filterOutCondition returns a new slice of fim watcher conditions without conditions with the provided type.
-func filterOutCondition(conditions []fimv1alpha1.FimWatcherCondition, condType fimv1alpha1.FimWatcherConditionType) []fimv1alpha1.FimWatcherCondition {
-	var newConditions []fimv1alpha1.FimWatcherCondition
-	for _, c := range conditions {
-		if c.Type == condType {
-			continue
-		}
-		newConditions = append(newConditions, c)
-	}
-	return newConditions
 }
 
 func updateAnnotations(removeAnnotations []string, newAnnotations map[string]string, obj runtime.Object) error {
@@ -184,5 +112,35 @@ func getPodContainerID(pod *corev1.Pod) string {
 	if len(pod.Status.ContainerStatuses) == 0 {
 		return ""
 	}
+	// @TODO: this is assuming a single container per pod
+	// eventually need to look up via podutil.GetContainerStatus(...)
 	return pod.Status.ContainerStatuses[0].ContainerID
+}
+
+func addFimdWatcher(hostIP string, config *pb.FimdConfig) {
+	// @TODO: send gRPC signal to [add]
+	fmt.Println(" ### [gRPC] ADD:", config.ContainerId)
+
+	conn, err := grpc.Dial(hostIP+":50051", grpc.WithInsecure())
+	if err != nil {
+		fmt.Printf("did not connect: %v\n", err)
+		return
+	}
+	defer conn.Close()
+
+	c := pb.NewFimdClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	r, err := c.NewWatch(ctx, config)
+	if err != nil {
+		fmt.Printf("could not watch: %v\n", err)
+		return
+	}
+	fmt.Printf("Watching: %s", r.Id)
+}
+
+func removeFimdWatcher(pod *corev1.Pod, cid string) {
+	// @TODO: send gRPC signal to [rm]
+	fmt.Println(" ### [gRPC] RM:", cid)
 }
