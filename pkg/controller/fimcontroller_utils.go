@@ -1,4 +1,4 @@
-package main
+package fimcontroller
 
 import (
 	"fmt"
@@ -18,6 +18,10 @@ import (
 	fimv1alpha1 "clustergarage.io/fim-controller/pkg/apis/fimcontroller/v1alpha1"
 	fimv1alpha1client "clustergarage.io/fim-controller/pkg/client/clientset/versioned/typed/fimcontroller/v1alpha1"
 	pb "clustergarage.io/fim-proto/fim"
+)
+
+const (
+	GRPC_PORT = ":50051"
 )
 
 func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1alpha1.FimWatcher,
@@ -121,7 +125,7 @@ func addFimdWatcher(hostIP string, config *pb.FimdConfig) {
 	// @TODO: send gRPC signal to [add]
 	fmt.Println(" ### [gRPC] ADD:", config.ContainerId)
 
-	conn, err := grpc.Dial(hostIP+":50051", grpc.WithInsecure())
+	conn, err := grpc.Dial(hostIP+GRPC_PORT, grpc.WithInsecure())
 	if err != nil {
 		fmt.Printf("did not connect: %v\n", err)
 		return
@@ -137,7 +141,7 @@ func addFimdWatcher(hostIP string, config *pb.FimdConfig) {
 		fmt.Printf("could not watch: %v\n", err)
 		return
 	}
-	fmt.Printf("Watching: %s", r.Id)
+	fmt.Printf("Watching: %d\n", r.Id)
 }
 
 func removeFimdWatcher(pod *corev1.Pod, cid string) {

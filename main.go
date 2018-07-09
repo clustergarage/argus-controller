@@ -11,6 +11,7 @@ import (
 
 	clientset "clustergarage.io/fim-controller/pkg/client/clientset/versioned"
 	informers "clustergarage.io/fim-controller/pkg/client/informers/externalversions"
+	fimcontroller "clustergarage.io/fim-controller/pkg/controller"
 	"clustergarage.io/fim-controller/pkg/signals"
 )
 
@@ -45,7 +46,7 @@ func main() {
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(kubeclientset, time.Second*30)
 	fimInformerFactory := informers.NewSharedInformerFactory(fimclientset, time.Second*30)
 
-	controller := NewFimWatcherController(kubeclientset, fimclientset,
+	controller := fimcontroller.NewFimWatcherController(kubeclientset, fimclientset,
 		fimInformerFactory.Fimcontroller().V1alpha1().FimWatchers(),
 		kubeInformerFactory.Core().V1().Pods())
 
