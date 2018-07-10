@@ -20,10 +20,6 @@ import (
 	pb "clustergarage.io/fim-proto/fim"
 )
 
-const (
-	GRPC_PORT = ":50051"
-)
-
 func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1alpha1.FimWatcher,
 	newStatus fimv1alpha1.FimWatcherStatus) (*fimv1alpha1.FimWatcher, error) {
 
@@ -121,11 +117,11 @@ func getPodContainerID(pod *corev1.Pod) string {
 	return pod.Status.ContainerStatuses[0].ContainerID
 }
 
-func addFimdWatcher(hostIP string, config *pb.FimdConfig) {
+func addFimdWatcher(hostURL string, config *pb.FimdConfig) {
 	// @TODO: send gRPC signal to [add]
-	fmt.Println(" ### [gRPC] ADD:", config.ContainerId)
+	fmt.Println(" ### [gRPC] ADD:", config.ContainerId, "|", hostURL)
 
-	conn, err := grpc.Dial(hostIP+GRPC_PORT, grpc.WithInsecure())
+	conn, err := grpc.Dial(hostURL, grpc.WithInsecure())
 	if err != nil {
 		fmt.Printf("did not connect: %v\n", err)
 		return

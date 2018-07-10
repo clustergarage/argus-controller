@@ -48,7 +48,8 @@ func main() {
 
 	controller := fimcontroller.NewFimWatcherController(kubeclientset, fimclientset,
 		fimInformerFactory.Fimcontroller().V1alpha1().FimWatchers(),
-		kubeInformerFactory.Core().V1().Pods())
+		kubeInformerFactory.Core().V1().Pods(),
+		kubeInformerFactory.Core().V1().Services())
 
 	go kubeInformerFactory.Start(stopCh)
 	go fimInformerFactory.Start(stopCh)

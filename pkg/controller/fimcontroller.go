@@ -49,6 +49,8 @@ const (
 
 	// The number of times we retry updating a FimWatcher's status.
 	statusUpdateRetries = 1
+
+	FIMD_SVC = "fimd-svc"
 )
 
 // Controller is the controller implementation for FimWatcher resources
@@ -78,6 +80,8 @@ type FimWatcherController struct {
 	// Added as a member to the struct to allow injection for testing.
 	podListerSynced cache.InformerSynced
 
+	svcLister corelisters.ServiceLister
+
 	// workqueue is a rate limited work queue. This is used to queue work to be
 	// processed instead of performing it as soon as a change happens. This
 	// means we can ensure we only process a fixed amount of resources at a
@@ -91,7 +95,8 @@ type FimWatcherController struct {
 
 // NewFimWatcherController returns a new fim watch controller
 func NewFimWatcherController(kubeclientset kubernetes.Interface, fimclientset clientset.Interface,
-	fwInformer informers.FimWatcherInformer, podInformer coreinformers.PodInformer) *FimWatcherController {
+	fwInformer informers.FimWatcherInformer, podInformer coreinformers.PodInformer,
+	svcInformer coreinformers.ServiceInformer) *FimWatcherController {
 
 	// Create event broadcaster
 	// Add fimcontroller types to the default Kubernetes Scheme so Events can be
@@ -113,6 +118,7 @@ func NewFimWatcherController(kubeclientset kubernetes.Interface, fimclientset cl
 		fwListerSynced:   fwInformer.Informer().HasSynced,
 		podLister:        podInformer.Lister(),
 		podListerSynced:  podInformer.Informer().HasSynced,
+		svcLister:        svcInformer.Lister(),
 		workqueue:        workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "FimWatchers"),
 		recorder:         recorder,
 	}
@@ -598,8 +604,8 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 	return manageSubjectsErr
 }
 
-func (fwc *FimWatcherController) updatePodOnceValid(po *corev1.Pod, fw *fimv1alpha1.FimWatcher) {
-	var cid, hostIP string
+func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1alpha1.FimWatcher) {
+	var cid, hostURL string
 	retry.RetryOnConflict(wait.Backoff{
 		// @TODO: evaluate these values
 		Steps:    10,
@@ -608,7 +614,7 @@ func (fwc *FimWatcherController) updatePodOnceValid(po *corev1.Pod, fw *fimv1alp
 		Jitter:   0.1,
 	}, func() error {
 		var err error
-		po, err := fwc.podLister.Pods(fw.Namespace).Get(po.Name)
+		po, err := fwc.podLister.Pods(fw.Namespace).Get(pod.Name)
 		if err != nil {
 			return err
 		}
@@ -627,13 +633,25 @@ func (fwc *FimWatcherController) updatePodOnceValid(po *corev1.Pod, fw *fimv1alp
 				po.Name, errors.New("container id not available"))
 			return err
 		}
-
 		cid = po.Status.ContainerStatuses[0].ContainerID
-		hostIP = po.Status.HostIP
+
+		svc, err := fwc.svcLister.Services("kube-system").Get(FIMD_SVC)
+		if err != nil {
+			fmt.Println(err)
+			return err
+		}
+		if len(svc.Spec.Ports) == 0 ||
+			svc.Spec.Ports[0].NodePort <= 0 {
+			err = errorsutil.NewConflict(schema.GroupResource{Resource: "services"},
+				po.Name, errors.New("service nodeport not available"))
+			return err
+		}
+		hostURL = fmt.Sprintf("%s:%d", po.Status.HostIP, svc.Spec.Ports[0].NodePort)
+
 		return err
 	})
 
-	if cid == "" {
+	if cid == "" || hostURL == "" {
 		return
 	}
 
@@ -645,21 +663,19 @@ func (fwc *FimWatcherController) updatePodOnceValid(po *corev1.Pod, fw *fimv1alp
 		})
 	}
 
-	if hostIP != "" {
-		addFimdWatcher(hostIP, &pb.FimdConfig{
-			ContainerId: cid,
-			Subjects:    subjects,
-			//fw.Spec.Subjects,
-		})
-	}
+	addFimdWatcher(hostURL, &pb.FimdConfig{
+		ContainerId: cid,
+		Subjects:    subjects,
+		//fw.Spec.Subjects,
+	})
 
-	err := updateAnnotations(nil, map[string]string{FimdURIAnnotationKey: "/foo/bar"}, po)
+	err := updateAnnotations(nil, map[string]string{FimdURIAnnotationKey: "/foo/bar"}, pod)
 	if err != nil {
 		return
 	}
-	updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(po.Namespace), fwc.podLister,
-		fw.Namespace, po.Name, func(p *corev1.Pod) error {
-			p.Annotations = po.Annotations
+	updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(pod.Namespace), fwc.podLister,
+		fw.Namespace, pod.Name, func(po *corev1.Pod) error {
+			po.Annotations = pod.Annotations
 			return nil
 		})
 }
