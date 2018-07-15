@@ -24,7 +24,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
-	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
+	//podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/controller"
 
 	fimv1alpha1 "clustergarage.io/fim-controller/pkg/apis/fimcontroller/v1alpha1"
@@ -220,34 +220,24 @@ func (fwc *FimWatcherController) getPodFimWatchers(pod *corev1.Pod) []*fimv1alph
 	return fws
 }
 
-func (fwc *FimWatcherController) resolveControllerRef(namespace string, controllerRef *metav1.OwnerReference) *fimv1alpha1.FimWatcher {
-	// We can't look up by UID, so look up by Name and then verify UID.
-	// Don't even try to look up by Name if it's the wrong Kind.
-	if controllerRef.Kind != fwc.Kind {
-		return nil
-	}
-
-	fw, err := fwc.fwLister.FimWatchers(namespace).Get(controllerRef.Name)
-	if err != nil {
-		return nil
-	}
-
-	if fw.UID != controllerRef.UID {
-		// The controller we found with this Name is not the same one that the
-		// ControllerRef points to.
-		return nil
-	}
-	return fw
-}
-
 // callback when FimWatcher is updated
 func (fwc *FimWatcherController) updateFimWatcher(old, new interface{}) {
 	oldFW := old.(*fimv1alpha1.FimWatcher)
 	newFW := new.(*fimv1alpha1.FimWatcher)
 
-	if len(oldFW.Spec.Subjects) != len(newFW.Spec.Subjects) {
-		glog.V(4).Infof("%v %v updated. Desired subject count change: %d->%d", fwc.Kind, newFW.Name, len(oldFW.Spec.Subjects), len(newFW.Spec.Subjects))
+	subjectsChanged := !reflect.DeepEqual(newFW.Spec.Subjects, oldFW.Spec.Subjects)
+	if subjectsChanged {
+		selector, err := metav1.LabelSelectorAsSelector(newFW.Spec.Selector)
+		if err != nil {
+			return
+		}
+		if selectedPods, err := fwc.podLister.Pods(newFW.Namespace).List(selector); err == nil {
+			for _, pod := range selectedPods {
+				go fwc.updatePodOnceValid(pod, newFW)
+			}
+		}
 	}
+
 	fwc.enqueueFimWatcher(new)
 }
 
@@ -303,30 +293,34 @@ func (fwc *FimWatcherController) updatePod(old, new interface{}) {
 		return
 	}
 
-	if fwName, found := newPod.GetAnnotations()[FimWatcherAnnotationKey]; found {
-		fw, err := fwc.fwLister.FimWatchers(newPod.Namespace).Get(fwName)
-		if err != nil {
+	/*
+		if fwName, found := newPod.GetAnnotations()[FimWatcherAnnotationKey]; found {
+			fw, err := fwc.fwLister.FimWatchers(newPod.Namespace).Get(fwName)
+			if err != nil {
+				return
+			}
+			glog.V(4).Infof("Pod %s updated, objectMeta %+v -> %+v.", newPod.Name, oldPod.ObjectMeta, newPod.ObjectMeta)
+			//fmt.Printf("Pod %s updated, objectMeta %+v -> %+v.\n", newPod.Name, oldPod.ObjectMeta, newPod.ObjectMeta)
+			fwc.enqueueFimWatcher(fw)
+
+			// TODO: MinReadySeconds in the Pod will generate an Available condition to be added in
+			// the Pod status which in turn will trigger a requeue of the owning fim watcher thus
+			// having its status updated with the newly available subject. For now, we can fake the
+			// update by resyncing the controller MinReadySeconds after the it is requeued because
+			// a Pod transitioned to Ready.
+			// Note that this still suffers from #29229, we are just moving the problem one level
+			// "closer" to kubelet (from the deployment to the subject set controller).
+			if !podutil.IsPodReady(oldPod) &&
+				podutil.IsPodReady(newPod) {
+				glog.V(2).Infof("%v %q will be enqueued after %ds for availability check", fwc.Kind, fw.Name, minReadySeconds)
+				//fmt.Printf("%v %q will be enqueued after %ds for availability check\n", fwc.Kind, fw.Name, minReadySeconds)
+				// Add a second to avoid milliseconds skew in AddAfter.
+				// See https://github.com/kubernetes/kubernetes/issues/39785#issuecomment-279959133 for more info.
+				fwc.enqueueFimWatcherAfter(fw, (time.Duration(minReadySeconds)*time.Second)+time.Second)
+			}
 			return
 		}
-		glog.V(4).Infof("Pod %s updated, objectMeta %+v -> %+v.", newPod.Name, oldPod.ObjectMeta, newPod.ObjectMeta)
-		fwc.enqueueFimWatcher(fw)
-
-		// TODO: MinReadySeconds in the Pod will generate an Available condition to be added in
-		// the Pod status which in turn will trigger a requeue of the owning fim watcher thus
-		// having its status updated with the newly available subject. For now, we can fake the
-		// update by resyncing the controller MinReadySeconds after the it is requeued because
-		// a Pod transitioned to Ready.
-		// Note that this still suffers from #29229, we are just moving the problem one level
-		// "closer" to kubelet (from the deployment to the subject set controller).
-		if !podutil.IsPodReady(oldPod) &&
-			podutil.IsPodReady(newPod) {
-			glog.V(2).Infof("%v %q will be enqueued after %ds for availability check", fwc.Kind, fw.Name, minReadySeconds)
-			// Add a second to avoid milliseconds skew in AddAfter.
-			// See https://github.com/kubernetes/kubernetes/issues/39785#issuecomment-279959133 for more info.
-			fwc.enqueueFimWatcherAfter(fw, (time.Duration(minReadySeconds)*time.Second)+time.Second)
-		}
-		return
-	}
+	*/
 
 	labelChanged := !reflect.DeepEqual(newPod.Labels, oldPod.Labels)
 	if newPod.DeletionTimestamp != nil {
@@ -634,10 +628,12 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 
 	fwc.recorder.Event(fw, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
 
-	//if manageSubjectsErr == nil &&
-	//	updatedFW.Status.ObservablePods != len(updatedFW.Spec.Subjects) {
-	//	fwc.enqueueFimWatcherAfter(updatedFW, time.Duration(minReadySeconds)*time.Second)
-	//}
+	/*
+		if manageSubjectsErr == nil &&
+			updatedFW.Status.ObservablePods != len(updatedFW.Spec.Subjects) {
+			fwc.enqueueFimWatcherAfter(updatedFW, time.Duration(minReadySeconds)*time.Second)
+		}
+	*/
 
 	return manageSubjectsErr
 }
@@ -645,7 +641,7 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1alpha1.FimWatcher) {
 	var cid, hostURL string
 	retry.RetryOnConflict(wait.Backoff{
-		// @TODO: evaluate these values
+		// @TODO: re-evaluate these values
 		Steps:    10,
 		Duration: 1 * time.Second,
 		Factor:   2.0,
@@ -682,17 +678,9 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 		return
 	}
 
-	var subjects []*pb.FimWatcherSubject
-	for _, s := range fw.Spec.Subjects {
-		subjects = append(subjects, &pb.FimWatcherSubject{
-			Paths:  s.Paths,
-			Events: s.Events,
-		})
-	}
-
 	addFimdWatcher(hostURL, &pb.FimdConfig{
 		ContainerId: cid,
-		Subjects:    subjects,
+		Subjects:    getFimWatcherSubjects(fw),
 	})
 
 	err := updateAnnotations(nil, map[string]string{FimdURIAnnotationKey: "/foo/bar"}, pod)
@@ -720,4 +708,15 @@ func (fwc *FimWatcherController) getHostURLFromService(pod *corev1.Pod) (string,
 	}
 	// @TODO: split out hostURL check
 	return fmt.Sprintf("%s:%d", pod.Status.HostIP, svc.Spec.Ports[0].NodePort), nil
+}
+
+func getFimWatcherSubjects(fw *fimv1alpha1.FimWatcher) []*pb.FimWatcherSubject {
+	var subjects []*pb.FimWatcherSubject
+	for _, s := range fw.Spec.Subjects {
+		subjects = append(subjects, &pb.FimWatcherSubject{
+			Paths:  s.Paths,
+			Events: s.Events,
+		})
+	}
+	return subjects
 }
