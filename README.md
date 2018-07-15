@@ -11,9 +11,11 @@ git clone git@github.com/clustergarage/fim-controller
 
 ```
 # save Godeps
-godep save ./...
+godep save
 
 # build kube-controller definitions
+# NOTE: one may need to `git clone https://github.com/kubernetes/code-generator.git`
+#       into vendor/k8s.io if pkg is not up-to-date
 ./bin/update-codegen.sh
 
 # build binary

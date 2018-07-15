@@ -82,9 +82,7 @@ func (in *FimWatcherSpec) DeepCopyInto(out *FimWatcherSpec) {
 		in, out := &in.Subjects, &out.Subjects
 		*out = make([]*FimWatcherSubject, len(*in))
 		for i := range *in {
-			if (*in)[i] == nil {
-				(*out)[i] = nil
-			} else {
+			if (*in)[i] != nil {
 				in, out := &(*in)[i], &(*out)[i]
 				*out = new(FimWatcherSubject)
 				(*in).DeepCopyInto(*out)

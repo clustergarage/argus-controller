@@ -12,3 +12,7 @@ spec:
     events:
     - create
     - modify
+  #- paths:
+  #  - /opt/app-root/src
+  #  events:
+  #  - all

@@ -2,7 +2,7 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	//pb "clustergarage.io/fim-proto/fim"
+	//pb "clustergarage.io/fim-proto/golang"
 )
 
 // +genclient

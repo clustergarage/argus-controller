@@ -17,8 +17,15 @@ import (
 
 	fimv1alpha1 "clustergarage.io/fim-controller/pkg/apis/fimcontroller/v1alpha1"
 	fimv1alpha1client "clustergarage.io/fim-controller/pkg/client/clientset/versioned/typed/fimcontroller/v1alpha1"
-	pb "clustergarage.io/fim-proto/fim"
+	pb "clustergarage.io/fim-proto/golang"
 )
+
+type FimdConnection struct {
+	client pb.FimdClient
+	conn   *grpc.ClientConn
+	ctx    context.Context
+	cancel context.CancelFunc
+}
 
 func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1alpha1.FimWatcher,
 	newStatus fimv1alpha1.FimWatcherStatus) (*fimv1alpha1.FimWatcher, error) {
@@ -117,30 +124,57 @@ func getPodContainerID(pod *corev1.Pod) string {
 	return pod.Status.ContainerStatuses[0].ContainerID
 }
 
-func addFimdWatcher(hostURL string, config *pb.FimdConfig) {
-	// @TODO: send gRPC signal to [add]
-	fmt.Println(" ### [gRPC] ADD:", config.ContainerId, "|", hostURL)
+func connectToFimdClient(hostURL string) FimdConnection {
+	var fc FimdConnection
+	var err error
+	//hostURL = "0.0.0.0:50051"
 
-	conn, err := grpc.Dial(hostURL, grpc.WithInsecure())
+	fc.conn, err = grpc.Dial(hostURL, grpc.WithInsecure())
 	if err != nil {
 		fmt.Printf("did not connect: %v\n", err)
-		return
+		return fc
 	}
-	defer conn.Close()
-
-	c := pb.NewFimdClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	r, err := c.NewWatch(ctx, config)
-	if err != nil {
-		fmt.Printf("could not watch: %v\n", err)
-		return
-	}
-	fmt.Printf("Watching: %d\n", r.Id)
+	fc.ctx, fc.cancel = context.WithTimeout(context.Background(), time.Second)
+	fc.client = pb.NewFimdClient(fc.conn)
+	return fc
 }
 
-func removeFimdWatcher(pod *corev1.Pod, cid string) {
-	// @TODO: send gRPC signal to [rm]
-	fmt.Println(" ### [gRPC] RM:", cid)
+func addFimdWatcher(hostURL string, config *pb.FimdConfig) {
+	fmt.Println(" ### [gRPC] ADD:", config.ContainerId, "|", hostURL)
+
+	fc := connectToFimdClient(hostURL)
+	defer fc.conn.Close()
+	defer fc.cancel()
+
+	if fc.client == nil {
+		fmt.Println("could not connect to fimd client")
+		return
+	}
+
+	r, err := fc.client.CreateWatch(fc.ctx, config)
+	if err != nil {
+		fmt.Printf("could not create watch: %v\n", err)
+		return
+	}
+	fmt.Printf("Started watching: %d\n", r.Id)
+}
+
+func removeFimdWatcher(hostURL string, config *pb.FimdConfig) {
+	fmt.Println(" ### [gRPC] RM:", config.ContainerId, "|", hostURL)
+
+	fc := connectToFimdClient(hostURL)
+	defer fc.conn.Close()
+	defer fc.cancel()
+
+	if fc.client == nil {
+		fmt.Println("could not connect to fimd client")
+		return
+	}
+
+	r, err := fc.client.DestroyWatch(fc.ctx, config)
+	if err != nil {
+		fmt.Printf("could not destroy watch: %v\n", err)
+		return
+	}
+	fmt.Printf("Stopped watching: %d\n", r.Id)
 }

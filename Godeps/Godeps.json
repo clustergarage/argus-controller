@@ -2,13 +2,10 @@
 	"ImportPath": "clustergarage.io/fim-controller",
 	"GoVersion": "go1.10",
 	"GodepVersion": "v80",
-	"Packages": [
-		"./..."
-	],
 	"Deps": [
 		{
-			"ImportPath": "clustergarage.io/fim-proto/fim",
-			"Rev": "cfd9879dc5699e53e67c57e0c2aa5c4bf1b0c8a8"
+			"ImportPath": "clustergarage.io/fim-proto/golang",
+			"Rev": "8cb4004cc2f4134e14f251a14fb2537d9845c4e9"
 		},
 		{
 			"ImportPath": "github.com/davecgh/go-spew/spew",
@@ -185,11 +182,11 @@
 		},
 		{
 			"ImportPath": "golang.org/x/sys/unix",
-			"Rev": "7138fd3d9dc8335c567ca206f4333fb75eb05d56"
+			"Rev": "1b2967e3c290b7c545b3db0deeda16e9be4f98a2"
 		},
 		{
 			"ImportPath": "golang.org/x/sys/windows",
-			"Rev": "7138fd3d9dc8335c567ca206f4333fb75eb05d56"
+			"Rev": "1b2967e3c290b7c545b3db0deeda16e9be4f98a2"
 		},
 		{
 			"ImportPath": "golang.org/x/text/secure/bidirule",
@@ -775,11 +772,6 @@
 			"Rev": "615dfd3eb0c3d083e20c404dea7dfc63bd032ee1"
 		},
 		{
-			"ImportPath": "k8s.io/client-go/discovery/fake",
-			"Comment": "kubernetes-1.11.0-beta.0-75-g615dfd3e",
-			"Rev": "615dfd3eb0c3d083e20c404dea7dfc63bd032ee1"
-		},
-		{
 			"ImportPath": "k8s.io/client-go/informers",
 			"Comment": "kubernetes-1.11.0-beta.0-75-g615dfd3e",
 			"Rev": "615dfd3eb0c3d083e20c404dea7dfc63bd032ee1"
@@ -1300,11 +1292,6 @@
 			"Rev": "615dfd3eb0c3d083e20c404dea7dfc63bd032ee1"
 		},
 		{
-			"ImportPath": "k8s.io/client-go/testing",
-			"Comment": "kubernetes-1.11.0-beta.0-75-g615dfd3e",
-			"Rev": "615dfd3eb0c3d083e20c404dea7dfc63bd032ee1"
-		},
-		{
 			"ImportPath": "k8s.io/client-go/tools/auth",
 			"Comment": "kubernetes-1.11.0-beta.0-75-g615dfd3e",
 			"Rev": "615dfd3eb0c3d083e20c404dea7dfc63bd032ee1"
@@ -1401,7 +1388,7 @@
 		},
 		{
 			"ImportPath": "k8s.io/kube-openapi/pkg/util/proto",
-			"Rev": "91cfa479c814065e420cee7ed227db0f63a5854e"
+			"Rev": "0cf8f7e6ed1d2e3d47d02e3b6e559369af24d803"
 		},
 		{
 			"ImportPath": "k8s.io/kubernetes/pkg/api/legacyscheme",

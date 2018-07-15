@@ -24,6 +24,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
+	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/controller"
 
 	fimv1alpha1 "clustergarage.io/fim-controller/pkg/apis/fimcontroller/v1alpha1"
@@ -31,11 +32,14 @@ import (
 	fimscheme "clustergarage.io/fim-controller/pkg/client/clientset/versioned/scheme"
 	informers "clustergarage.io/fim-controller/pkg/client/informers/externalversions/fimcontroller/v1alpha1"
 	listers "clustergarage.io/fim-controller/pkg/client/listers/fimcontroller/v1alpha1"
-	pb "clustergarage.io/fim-proto/fim"
+	pb "clustergarage.io/fim-proto/golang"
 )
 
 const (
 	controllerAgentName = "fimcontroller"
+
+	fimdSvc       = "fimd-svc"
+	fimdNamespace = "kube-system"
 
 	// SuccessSynced is used as part of the Event 'reason' when a FimWatcher is synced
 	SuccessSynced = "Synced"
@@ -50,7 +54,7 @@ const (
 	// The number of times we retry updating a FimWatcher's status.
 	statusUpdateRetries = 1
 
-	FIMD_SVC = "fimd-svc"
+	minReadySeconds = 60
 )
 
 // Controller is the controller implementation for FimWatcher resources
@@ -291,11 +295,36 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 func (fwc *FimWatcherController) updatePod(old, new interface{}) {
 	newPod := new.(*corev1.Pod)
 	oldPod := old.(*corev1.Pod)
-	//fmt.Println(" [updatePod] ", oldPod.Name, newPod.Name)
+	fmt.Println(" [updatePod] ", oldPod.Name, newPod.Name)
 
 	if newPod.ResourceVersion == oldPod.ResourceVersion {
 		// Periodic resync will send update events for all known pods.
 		// Two different versions of the same pod will always have different RVs.
+		return
+	}
+
+	if fwName, found := newPod.GetAnnotations()[FimWatcherAnnotationKey]; found {
+		fw, err := fwc.fwLister.FimWatchers(newPod.Namespace).Get(fwName)
+		if err != nil {
+			return
+		}
+		glog.V(4).Infof("Pod %s updated, objectMeta %+v -> %+v.", newPod.Name, oldPod.ObjectMeta, newPod.ObjectMeta)
+		fwc.enqueueFimWatcher(fw)
+
+		// TODO: MinReadySeconds in the Pod will generate an Available condition to be added in
+		// the Pod status which in turn will trigger a requeue of the owning fim watcher thus
+		// having its status updated with the newly available subject. For now, we can fake the
+		// update by resyncing the controller MinReadySeconds after the it is requeued because
+		// a Pod transitioned to Ready.
+		// Note that this still suffers from #29229, we are just moving the problem one level
+		// "closer" to kubelet (from the deployment to the subject set controller).
+		if !podutil.IsPodReady(oldPod) &&
+			podutil.IsPodReady(newPod) {
+			glog.V(2).Infof("%v %q will be enqueued after %ds for availability check", fwc.Kind, fw.Name, minReadySeconds)
+			// Add a second to avoid milliseconds skew in AddAfter.
+			// See https://github.com/kubernetes/kubernetes/issues/39785#issuecomment-279959133 for more info.
+			fwc.enqueueFimWatcherAfter(fw, (time.Duration(minReadySeconds)*time.Second)+time.Second)
+		}
 		return
 	}
 
@@ -319,7 +348,6 @@ func (fwc *FimWatcherController) updatePod(old, new interface{}) {
 // obj could be an *v1.Pod, or a DeletionFinalStateUnknown marker item.
 func (fwc *FimWatcherController) deletePod(obj interface{}) {
 	pod, ok := obj.(*corev1.Pod)
-	//cid := pod.Status.ContainerStatuses[0].ContainerID
 	fmt.Println(" [deletePod] ", pod.Name)
 
 	// When a delete is dropped, the relist will notice a pod in the store not
@@ -461,8 +489,13 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 	var podsToUpdate []*corev1.Pod
 	for _, pod := range rmPods {
 		if _, found := pod.GetAnnotations()[FimdURIAnnotationKey]; found {
-			if cid := getPodContainerID(pod); cid != "" {
-				removeFimdWatcher(pod, cid)
+			cid := getPodContainerID(pod)
+			if cid != "" {
+				hostURL, err := fwc.getHostURLFromService(pod)
+				if err != nil {
+					return err
+				}
+				removeFimdWatcher(hostURL, &pb.FimdConfig{ContainerId: cid})
 			}
 		}
 		err := updateAnnotations([]string{FimWatcherAnnotationKey, FimdURIAnnotationKey}, nil, pod)
@@ -601,6 +634,11 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 
 	fwc.recorder.Event(fw, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
 
+	//if manageSubjectsErr == nil &&
+	//	updatedFW.Status.ObservablePods != len(updatedFW.Spec.Subjects) {
+	//	fwc.enqueueFimWatcherAfter(updatedFW, time.Duration(minReadySeconds)*time.Second)
+	//}
+
 	return manageSubjectsErr
 }
 
@@ -633,20 +671,9 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 				po.Name, errors.New("container id not available"))
 			return err
 		}
-		cid = po.Status.ContainerStatuses[0].ContainerID
 
-		svc, err := fwc.svcLister.Services("kube-system").Get(FIMD_SVC)
-		if err != nil {
-			fmt.Println(err)
-			return err
-		}
-		if len(svc.Spec.Ports) == 0 ||
-			svc.Spec.Ports[0].NodePort <= 0 {
-			err = errorsutil.NewConflict(schema.GroupResource{Resource: "services"},
-				po.Name, errors.New("service nodeport not available"))
-			return err
-		}
-		hostURL = fmt.Sprintf("%s:%d", po.Status.HostIP, svc.Spec.Ports[0].NodePort)
+		cid = po.Status.ContainerStatuses[0].ContainerID
+		hostURL, err = fwc.getHostURLFromService(po)
 
 		return err
 	})
@@ -666,7 +693,6 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 	addFimdWatcher(hostURL, &pb.FimdConfig{
 		ContainerId: cid,
 		Subjects:    subjects,
-		//fw.Spec.Subjects,
 	})
 
 	err := updateAnnotations(nil, map[string]string{FimdURIAnnotationKey: "/foo/bar"}, pod)
@@ -678,4 +704,20 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 			po.Annotations = pod.Annotations
 			return nil
 		})
+}
+
+func (fwc *FimWatcherController) getHostURLFromService(pod *corev1.Pod) (string, error) {
+	svc, err := fwc.svcLister.Services(fimdNamespace).Get(fimdSvc)
+	if err != nil {
+		fmt.Println(err)
+		return "", err
+	}
+	if len(svc.Spec.Ports) == 0 ||
+		svc.Spec.Ports[0].NodePort <= 0 {
+		err = errorsutil.NewConflict(schema.GroupResource{Resource: "services"},
+			pod.Name, errors.New("service nodeport not available"))
+		return "", err
+	}
+	// @TODO: split out hostURL check
+	return fmt.Sprintf("%s:%d", pod.Status.HostIP, svc.Spec.Ports[0].NodePort), nil
 }

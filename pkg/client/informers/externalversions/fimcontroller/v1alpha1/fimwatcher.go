@@ -5,7 +5,7 @@ package v1alpha1
 import (
 	time "time"
 
-	fimcontroller_v1alpha1 "clustergarage.io/fim-controller/pkg/apis/fimcontroller/v1alpha1"
+	fimcontrollerv1alpha1 "clustergarage.io/fim-controller/pkg/apis/fimcontroller/v1alpha1"
 	versioned "clustergarage.io/fim-controller/pkg/client/clientset/versioned"
 	internalinterfaces "clustergarage.io/fim-controller/pkg/client/informers/externalversions/internalinterfaces"
 	v1alpha1 "clustergarage.io/fim-controller/pkg/client/listers/fimcontroller/v1alpha1"
@@ -54,7 +54,7 @@ func NewFilteredFimWatcherInformer(client versioned.Interface, namespace string,
 				return client.FimcontrollerV1alpha1().FimWatchers(namespace).Watch(options)
 			},
 		},
-		&fimcontroller_v1alpha1.FimWatcher{},
+		&fimcontrollerv1alpha1.FimWatcher{},
 		resyncPeriod,
 		indexers,
 	)
@@ -65,7 +65,7 @@ func (f *fimWatcherInformer) defaultInformer(client versioned.Interface, resyncP
 }
 
 func (f *fimWatcherInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&fimcontroller_v1alpha1.FimWatcher{}, f.defaultInformer)
+	return f.factory.InformerFor(&fimcontrollerv1alpha1.FimWatcher{}, f.defaultInformer)
 }
 
 func (f *fimWatcherInformer) Lister() v1alpha1.FimWatcherLister {
