@@ -1,6 +1,7 @@
 package fimcontroller
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -49,7 +50,7 @@ const (
 
 	FimAnnotationKeyPrefix  = "fimcontroller.clustergarage.io/"
 	FimWatcherAnnotationKey = FimAnnotationKeyPrefix + "fim-watcher"
-	FimdURIAnnotationKey    = FimAnnotationKeyPrefix + "fimd-uri"
+	FimdHandleAnnotationKey = FimAnnotationKeyPrefix + "fimd-handle"
 
 	// The number of times we retry updating a FimWatcher's status.
 	statusUpdateRetries = 1
@@ -482,17 +483,21 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 
 	var podsToUpdate []*corev1.Pod
 	for _, pod := range rmPods {
-		if _, found := pod.GetAnnotations()[FimdURIAnnotationKey]; found {
+		if _, found := pod.GetAnnotations()[FimdHandleAnnotationKey]; found {
 			cid := getPodContainerID(pod)
 			if cid != "" {
 				hostURL, err := fwc.getHostURLFromService(pod)
 				if err != nil {
 					return err
 				}
-				removeFimdWatcher(hostURL, &pb.FimdConfig{ContainerId: cid})
+				removeFimdWatcher(hostURL, &pb.FimdConfig{
+					HostUid:     pod.Spec.NodeName,
+					ContainerId: cid,
+				})
 			}
 		}
-		err := updateAnnotations([]string{FimWatcherAnnotationKey, FimdURIAnnotationKey}, nil, pod)
+
+		err := updateAnnotations([]string{FimWatcherAnnotationKey, FimdHandleAnnotationKey}, nil, pod)
 		if err != nil {
 			return err
 		}
@@ -639,7 +644,7 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 }
 
 func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1alpha1.FimWatcher) {
-	var cid, hostURL string
+	var cid, nodeName, hostURL string
 	retry.RetryOnConflict(wait.Backoff{
 		// @TODO: re-evaluate these values
 		Steps:    10,
@@ -669,29 +674,40 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 		}
 
 		cid = po.Status.ContainerStatuses[0].ContainerID
+		nodeName = po.Spec.NodeName
 		hostURL, err = fwc.getHostURLFromService(po)
 
 		return err
 	})
 
-	if cid == "" || hostURL == "" {
+	if cid == "" ||
+		nodeName == "" ||
+		hostURL == "" {
 		return
 	}
 
-	addFimdWatcher(hostURL, &pb.FimdConfig{
+	if fimdHandle := addFimdWatcher(hostURL, &pb.FimdConfig{
+		HostUid:     nodeName,
 		ContainerId: cid,
-		Subjects:    getFimWatcherSubjects(fw),
-	})
+		Subject:     fwc.getFimWatcherSubjects(fw),
+	}); fimdHandle != nil {
+		handlejson, err := json.Marshal(fimdHandle)
+		if err != nil {
+			return
+		}
 
-	err := updateAnnotations(nil, map[string]string{FimdURIAnnotationKey: "/foo/bar"}, pod)
-	if err != nil {
-		return
+		if err := updateAnnotations(nil, map[string]string{
+			FimdHandleAnnotationKey: string(handlejson),
+		}, pod); err != nil {
+			return
+		}
+
+		updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(pod.Namespace), fwc.podLister,
+			fw.Namespace, pod.Name, func(po *corev1.Pod) error {
+				po.Annotations = pod.Annotations
+				return nil
+			})
 	}
-	updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(pod.Namespace), fwc.podLister,
-		fw.Namespace, pod.Name, func(po *corev1.Pod) error {
-			po.Annotations = pod.Annotations
-			return nil
-		})
 }
 
 func (fwc *FimWatcherController) getHostURLFromService(pod *corev1.Pod) (string, error) {
@@ -710,12 +726,12 @@ func (fwc *FimWatcherController) getHostURLFromService(pod *corev1.Pod) (string,
 	return fmt.Sprintf("%s:%d", pod.Status.HostIP, svc.Spec.Ports[0].NodePort), nil
 }
 
-func getFimWatcherSubjects(fw *fimv1alpha1.FimWatcher) []*pb.FimWatcherSubject {
+func (fwc *FimWatcherController) getFimWatcherSubjects(fw *fimv1alpha1.FimWatcher) []*pb.FimWatcherSubject {
 	var subjects []*pb.FimWatcherSubject
 	for _, s := range fw.Spec.Subjects {
 		subjects = append(subjects, &pb.FimWatcherSubject{
-			Paths:  s.Paths,
-			Events: s.Events,
+			Path:  s.Paths,
+			Event: s.Events,
 		})
 	}
 	return subjects

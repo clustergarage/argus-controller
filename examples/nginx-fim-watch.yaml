@@ -1,3 +1,5 @@
+# run with:
+# kubectl run nginx --image=nginx
 apiVersion: fimcontroller.clustergarage.io/v1alpha1
 kind: FimWatcher
 metadata:

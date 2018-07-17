@@ -1,3 +1,5 @@
+# run with:
+# oc new-app python:3.5~https://github.com/openshift/django-ex
 apiVersion: fimcontroller.clustergarage.io/v1alpha1
 kind: FimWatcher
 metadata:

@@ -27,6 +27,8 @@ type FimdConnection struct {
 	cancel context.CancelFunc
 }
 
+type updatePodFunc func(pod *corev1.Pod) error
+
 func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1alpha1.FimWatcher,
 	newStatus fimv1alpha1.FimWatcherStatus) (*fimv1alpha1.FimWatcher, error) {
 
@@ -81,8 +83,6 @@ func updateAnnotations(removeAnnotations []string, newAnnotations map[string]str
 
 	return nil
 }
-
-type updatePodFunc func(pod *corev1.Pod) error
 
 // UpdatePodWithRetries updates a pod with given applyUpdate function.
 func updatePodWithRetries(podClient coreclient.PodInterface, podLister corelisters.PodLister,
@@ -139,7 +139,7 @@ func connectToFimdClient(hostURL string) FimdConnection {
 	return fc
 }
 
-func addFimdWatcher(hostURL string, config *pb.FimdConfig) {
+func addFimdWatcher(hostURL string, config *pb.FimdConfig) *pb.FimdHandle {
 	fmt.Println(" ### [gRPC] ADD:", config.ContainerId, "|", hostURL)
 
 	fc := connectToFimdClient(hostURL)
@@ -148,15 +148,15 @@ func addFimdWatcher(hostURL string, config *pb.FimdConfig) {
 
 	if fc.client == nil {
 		fmt.Println("could not connect to fimd client")
-		return
+		return nil
 	}
 
-	r, err := fc.client.CreateWatch(fc.ctx, config)
+	response, err := fc.client.CreateWatch(fc.ctx, config)
 	if err != nil {
 		fmt.Printf("could not create watch: %v\n", err)
-		return
+		return nil
 	}
-	fmt.Printf("Started watching: %d\n", r.Id)
+	return response
 }
 
 func removeFimdWatcher(hostURL string, config *pb.FimdConfig) {
@@ -171,10 +171,9 @@ func removeFimdWatcher(hostURL string, config *pb.FimdConfig) {
 		return
 	}
 
-	r, err := fc.client.DestroyWatch(fc.ctx, config)
+	_, err := fc.client.DestroyWatch(fc.ctx, config)
 	if err != nil {
 		fmt.Printf("could not destroy watch: %v\n", err)
 		return
 	}
-	fmt.Printf("Stopped watching: %d\n", r.Id)
 }
