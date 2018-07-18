@@ -115,32 +115,35 @@ func updatePodWithRetries(podClient coreclient.PodInterface, podLister coreliste
 	return pod, retryErr
 }
 
-func getPodContainerID(pod *corev1.Pod) string {
+// @TODO: update with error return
+func getPodContainerIDs(pod *corev1.Pod) []string {
+	var cids []string
 	if len(pod.Status.ContainerStatuses) == 0 {
-		return ""
+		return cids
 	}
-	// @TODO: this is assuming a single container per pod
-	// eventually need to look up via podutil.GetContainerStatus(...)
-	return pod.Status.ContainerStatuses[0].ContainerID
+	for _, ctr := range pod.Status.ContainerStatuses {
+		cids = append(cids, ctr.ContainerID)
+	}
+	return cids
 }
 
 func connectToFimdClient(hostURL string) FimdConnection {
 	var fc FimdConnection
 	var err error
-	//hostURL = "0.0.0.0:50051"
 
 	fc.conn, err = grpc.Dial(hostURL, grpc.WithInsecure())
 	if err != nil {
 		fmt.Printf("did not connect: %v\n", err)
 		return fc
 	}
-	fc.ctx, fc.cancel = context.WithTimeout(context.Background(), time.Second)
+	// @TODO: re-evaluate this timeout
+	fc.ctx, fc.cancel = context.WithTimeout(context.Background(), 2*time.Second)
 	fc.client = pb.NewFimdClient(fc.conn)
 	return fc
 }
 
 func addFimdWatcher(hostURL string, config *pb.FimdConfig) *pb.FimdHandle {
-	fmt.Println(" ### [gRPC] ADD:", config.ContainerId, "|", hostURL)
+	fmt.Println(" ### [gRPC] ADD:", len(config.ContainerId), "|", hostURL)
 
 	fc := connectToFimdClient(hostURL)
 	defer fc.conn.Close()
@@ -160,7 +163,7 @@ func addFimdWatcher(hostURL string, config *pb.FimdConfig) *pb.FimdHandle {
 }
 
 func removeFimdWatcher(hostURL string, config *pb.FimdConfig) {
-	fmt.Println(" ### [gRPC] RM:", config.ContainerId, "|", hostURL)
+	fmt.Println(" ### [gRPC] RM:", len(config.ContainerId), "|", hostURL)
 
 	fc := connectToFimdClient(hostURL)
 	defer fc.conn.Close()

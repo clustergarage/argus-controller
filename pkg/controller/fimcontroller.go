@@ -228,6 +228,7 @@ func (fwc *FimWatcherController) updateFimWatcher(old, new interface{}) {
 
 	subjectsChanged := !reflect.DeepEqual(newFW.Spec.Subjects, oldFW.Spec.Subjects)
 	if subjectsChanged {
+		// add new fimwatcher definitions
 		selector, err := metav1.LabelSelectorAsSelector(newFW.Spec.Selector)
 		if err != nil {
 			return
@@ -286,7 +287,7 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 func (fwc *FimWatcherController) updatePod(old, new interface{}) {
 	newPod := new.(*corev1.Pod)
 	oldPod := old.(*corev1.Pod)
-	fmt.Println(" [updatePod] ", oldPod.Name, newPod.Name)
+	//fmt.Println(" [updatePod] ", oldPod.Name, newPod.Name)
 
 	if newPod.ResourceVersion == oldPod.ResourceVersion {
 		// Periodic resync will send update events for all known pods.
@@ -484,15 +485,15 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 	var podsToUpdate []*corev1.Pod
 	for _, pod := range rmPods {
 		if _, found := pod.GetAnnotations()[FimdHandleAnnotationKey]; found {
-			cid := getPodContainerID(pod)
-			if cid != "" {
+			cids := getPodContainerIDs(pod)
+			if len(cids) > 0 {
 				hostURL, err := fwc.getHostURLFromService(pod)
 				if err != nil {
 					return err
 				}
 				removeFimdWatcher(hostURL, &pb.FimdConfig{
 					HostUid:     pod.Spec.NodeName,
-					ContainerId: cid,
+					ContainerId: cids,
 				})
 			}
 		}
@@ -644,7 +645,8 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 }
 
 func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1alpha1.FimWatcher) {
-	var cid, nodeName, hostURL string
+	var cids []string
+	var nodeName, hostURL string
 	retry.RetryOnConflict(wait.Backoff{
 		// @TODO: re-evaluate these values
 		Steps:    10,
@@ -664,23 +666,27 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 			return err
 		}
 
-		// @TODO: this is assuming a single container per pod
-		// eventually need to look up via podutil.GetContainerStatus(...)
-		if len(po.Status.ContainerStatuses) == 0 ||
-			po.Status.ContainerStatuses[0].ContainerID == "" {
+		for _, ctr := range po.Status.ContainerStatuses {
+			if ctr.ContainerID == "" {
+				err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
+					po.Name, errors.New("pod container id not available"))
+				return err
+			}
+			cids = append(cids, ctr.ContainerID)
+		}
+		if len(po.Spec.Containers) != len(cids) {
 			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
-				po.Name, errors.New("container id not available"))
+				po.Name, errors.New("available pod container count does not match ready"))
 			return err
 		}
 
-		cid = po.Status.ContainerStatuses[0].ContainerID
 		nodeName = po.Spec.NodeName
 		hostURL, err = fwc.getHostURLFromService(po)
 
 		return err
 	})
 
-	if cid == "" ||
+	if len(cids) == 0 ||
 		nodeName == "" ||
 		hostURL == "" {
 		return
@@ -688,7 +694,7 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 
 	if fimdHandle := addFimdWatcher(hostURL, &pb.FimdConfig{
 		HostUid:     nodeName,
-		ContainerId: cid,
+		ContainerId: cids,
 		Subject:     fwc.getFimWatcherSubjects(fw),
 	}); fimdHandle != nil {
 		handlejson, err := json.Marshal(fimdHandle)
@@ -724,6 +730,7 @@ func (fwc *FimWatcherController) getHostURLFromService(pod *corev1.Pod) (string,
 	}
 	// @TODO: split out hostURL check
 	return fmt.Sprintf("%s:%d", pod.Status.HostIP, svc.Spec.Ports[0].NodePort), nil
+	//return "0.0.0.0:50051", nil
 }
 
 func (fwc *FimWatcherController) getFimWatcherSubjects(fw *fimv1alpha1.FimWatcher) []*pb.FimWatcherSubject {
