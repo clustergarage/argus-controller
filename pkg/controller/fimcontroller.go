@@ -25,7 +25,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
-	//podutil "k8s.io/kubernetes/pkg/api/v1/pod"
+	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/controller"
 
 	fimv1alpha1 "clustergarage.io/fim-controller/pkg/apis/fimcontroller/v1alpha1"
@@ -722,14 +722,12 @@ func (fwc *FimWatcherController) getHostURLFromService(pod *corev1.Pod) (string,
 		fmt.Println(err)
 		return "", err
 	}
-	if len(svc.Spec.Ports) == 0 ||
-		svc.Spec.Ports[0].NodePort <= 0 {
-		err = errorsutil.NewConflict(schema.GroupResource{Resource: "services"},
-			pod.Name, errors.New("service nodeport not available"))
+	port, err := podutil.FindPort(pod, &svc.Spec.Ports[0])
+	if err != nil {
 		return "", err
 	}
-	// @TODO: split out hostURL check
-	return fmt.Sprintf("%s:%d", pod.Status.HostIP, svc.Spec.Ports[0].NodePort), nil
+	fmt.Println(svc.Spec.ClusterIP, port)
+	return fmt.Sprintf("%s:%d", svc.Spec.ClusterIP, port), nil
 	//return "0.0.0.0:50051", nil
 }
 
