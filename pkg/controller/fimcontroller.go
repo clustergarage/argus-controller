@@ -595,7 +595,7 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 	var addPods []*corev1.Pod
 	for _, pod := range filteredPods {
 		// if pod is still annotated with observable key
-		if _, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found {
+		if value, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found && value == fw.Name {
 			rmPods = append(rmPods, pod)
 		}
 	}
@@ -603,7 +603,6 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 		if pod.DeletionTimestamp != nil {
 			continue
 		}
-		// @TODO: check if annotation also == fw.Name ?
 		// if pod is not annotated with observable key
 		if _, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; !found {
 			addPods = append(addPods, pod)
