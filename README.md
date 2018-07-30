@@ -22,29 +22,6 @@ godep save
 go bin -o bin/fim-controller .
 ```
 
-## Defining a FimWatcher component
-
-```
-apiVersion: fimcontroller.clustergarage.io/v1alpha1
-kind: FimWatcher
-metadata: [...]
-spec:
-  selector:
-    matchLabels:
-      run: myapp
-  subjects:
-  - paths:
-    - /var/log/myapp
-    events:
-    - open
-    - modify
-  - paths:
-    - /var/log/financialdata
-    events:
-    - all
-```
-
-
 ## Running Locally
 
 ```
