@@ -22,12 +22,6 @@ godep save
 go bin -o bin/fim-controller .
 ```
 
-## Preparing CustomResourceDefinitions
-
-```
-kubectl apply -f configs/fim-controller.yaml
-```
-
 ## Defining a FimWatcher component
 
 ```
