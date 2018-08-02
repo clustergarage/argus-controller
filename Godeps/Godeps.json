@@ -5,7 +5,7 @@
 	"Deps": [
 		{
 			"ImportPath": "clustergarage.io/fim-proto/golang",
-			"Rev": "0644cfa88d444894565eb3e7974ff2971af73db0"
+			"Rev": "c3294bd3c27bee6ef81975584c6784112bac37a3"
 		},
 		{
 			"ImportPath": "github.com/davecgh/go-spew/spew",

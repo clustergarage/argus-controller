@@ -178,49 +178,6 @@ func (fwc *FimWatcherController) Run(workers int, stopCh <-chan struct{}) error 
 	return nil
 }
 
-// getPodFimWatchers returns a list of FimWatchers matching the given pod
-func (fwc *FimWatcherController) getPodFimWatchers(pod *corev1.Pod) []*fimv1alpha1.FimWatcher {
-	if len(pod.Labels) == 0 {
-		fmt.Errorf("no FimWatchers found for pod %v because it has no labels", pod.Name)
-		return nil
-	}
-
-	list, err := fwc.fwLister.FimWatchers(pod.Namespace).List(labels.Everything())
-	if err != nil {
-		return nil
-	}
-
-	var fws []*fimv1alpha1.FimWatcher
-	for _, fw := range list {
-		if fw.Namespace != pod.Namespace {
-			continue
-		}
-		selector, err := metav1.LabelSelectorAsSelector(fw.Spec.Selector)
-		if err != nil {
-			fmt.Errorf("invalid selector: %v", err)
-			return nil
-		}
-
-		// If a FimWatcher with a nil or empty selector creeps in, it should match nothing, not everything.
-		if selector.Empty() || !selector.Matches(labels.Set(pod.Labels)) {
-			continue
-		}
-		fws = append(fws, fw)
-	}
-
-	if len(fws) == 0 {
-		fmt.Errorf("could not find FimWatcher for pod %s in namespace %s with labels: %v", pod.Name, pod.Namespace, pod.Labels)
-		return nil
-	}
-
-	if len(fws) > 1 {
-		// ControllerRef will ensure we don't do anything crazy, but more than one
-		// item in this list nevertheless constitutes user error.
-		runtime.HandleError(fmt.Errorf("user error! more than one %v is selecting pods with labels: %+v", fwc.Kind, pod.Labels))
-	}
-	return fws
-}
-
 // callback when FimWatcher is updated
 func (fwc *FimWatcherController) updateFimWatcher(old, new interface{}) {
 	oldFW := old.(*fimv1alpha1.FimWatcher)
@@ -255,22 +212,32 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 		return
 	}
 
-	// check if pod already has annotation; no need to queue if so
-	if fw, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found {
-		fwKey, err := controller.KeyFunc(fw)
+	// @TODO: document this
+	if label, _ := pod.GetLabels()["daemon"]; label == "fimd" {
+		allPods, err := fwc.podLister.List(labels.Everything())
 		if err != nil {
 			return
 		}
-		fwc.expectations.CreationObserved(fwKey)
-		glog.V(4).Infof("Annotated pod %s found: %#v.", pod.Name, pod)
-		fwc.enqueueFimWatcher(fw)
+		for _, po := range allPods {
+			if po.Spec.NodeName != pod.Spec.NodeName {
+				continue
+			}
+			if _, found := po.GetAnnotations()[FimWatcherAnnotationKey]; !found {
+				fws := fwc.getPodFimWatchers(po)
+				if len(fws) == 0 {
+					continue
+				}
+				glog.V(4).Infof("Unannotated pod %s found: %#v.", po.Name, po)
+				for _, fw := range fws {
+					fwc.enqueueFimWatcher(fw)
+				}
+			}
+		}
 		return
 	}
 
-	// Otherwise, it's unannotated. Get a list of all matching FimWatchers and sync
-	// them to see if anyone wants to adopt it.
-	// DO NOT observe creation because no controller should be waiting for an
-	// orphan.
+	// get a list of all matching FimWatchers and sync them to see if anyone wants to adopt it
+	// do not observe creation because no controller should be waiting for an orphan
 	fws := fwc.getPodFimWatchers(pod)
 	if len(fws) == 0 {
 		return
@@ -294,35 +261,6 @@ func (fwc *FimWatcherController) updatePod(old, new interface{}) {
 		// Two different versions of the same pod will always have different RVs.
 		return
 	}
-
-	/*
-		if fwName, found := newPod.GetAnnotations()[FimWatcherAnnotationKey]; found {
-			fw, err := fwc.fwLister.FimWatchers(newPod.Namespace).Get(fwName)
-			if err != nil {
-				return
-			}
-			glog.V(4).Infof("Pod %s updated, objectMeta %+v -> %+v.", newPod.Name, oldPod.ObjectMeta, newPod.ObjectMeta)
-			//fmt.Printf("Pod %s updated, objectMeta %+v -> %+v.\n", newPod.Name, oldPod.ObjectMeta, newPod.ObjectMeta)
-			fwc.enqueueFimWatcher(fw)
-
-			// TODO: MinReadySeconds in the Pod will generate an Available condition to be added in
-			// the Pod status which in turn will trigger a requeue of the owning fim watcher thus
-			// having its status updated with the newly available subject. For now, we can fake the
-			// update by resyncing the controller MinReadySeconds after the it is requeued because
-			// a Pod transitioned to Ready.
-			// Note that this still suffers from #29229, we are just moving the problem one level
-			// "closer" to kubelet (from the deployment to the subject set controller).
-			if !podutil.IsPodReady(oldPod) &&
-				podutil.IsPodReady(newPod) {
-				glog.V(2).Infof("%v %q will be enqueued after %ds for availability check", fwc.Kind, fw.Name, minReadySeconds)
-				//fmt.Printf("%v %q will be enqueued after %ds for availability check\n", fwc.Kind, fw.Name, minReadySeconds)
-				// Add a second to avoid milliseconds skew in AddAfter.
-				// See https://github.com/kubernetes/kubernetes/issues/39785#issuecomment-279959133 for more info.
-				fwc.enqueueFimWatcherAfter(fw, (time.Duration(minReadySeconds)*time.Second)+time.Second)
-			}
-			return
-		}
-	*/
 
 	labelChanged := !reflect.DeepEqual(newPod.Labels, oldPod.Labels)
 	if newPod.DeletionTimestamp != nil {
@@ -375,6 +313,23 @@ func (fwc *FimWatcherController) deletePod(obj interface{}) {
 		glog.V(4).Infof("Annotated pod %s/%s deleted through %v, timestamp %+v: %#v.", pod.Namespace, pod.Name, runtime.GetCaller(), pod.DeletionTimestamp, pod)
 		fwc.expectations.DeletionObserved(fwKey)
 		fwc.enqueueFimWatcher(fw)
+	}
+
+	// @TODO: document this
+	if label, _ := pod.GetLabels()["daemon"]; label == "fimd" {
+		allPods, err := fwc.podLister.List(labels.Everything())
+		if err != nil {
+			return
+		}
+		for _, po := range allPods {
+			if po.Spec.NodeName != pod.Spec.NodeName {
+				continue
+			}
+			if _, found := po.GetAnnotations()[FimWatcherAnnotationKey]; found {
+				updateAnnotations([]string{FimWatcherAnnotationKey, FimdHandleAnnotationKey}, nil, po)
+			}
+		}
+		glog.V(4).Infof("Daemon pod %s/%s deleted through %v, timestamp %+v: %#v.", pod.Namespace, pod.Name, runtime.GetCaller(), pod.DeletionTimestamp, pod)
 	}
 }
 
@@ -633,14 +588,55 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 
 	fwc.recorder.Event(fw, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
 
-	/*
-		if manageSubjectsErr == nil &&
-			updatedFW.Status.ObservablePods != len(updatedFW.Spec.Subjects) {
-			fwc.enqueueFimWatcherAfter(updatedFW, time.Duration(minReadySeconds)*time.Second)
-		}
-	*/
+	//if manageSubjectsErr == nil &&
+	//	updatedFW.Status.ObservablePods != len(updatedFW.Spec.Subjects) {
+	//	fwc.enqueueFimWatcherAfter(updatedFW, time.Duration(minReadySeconds)*time.Second)
+	//}
 
 	return manageSubjectsErr
+}
+
+// getPodFimWatchers returns a list of FimWatchers matching the given pod
+func (fwc *FimWatcherController) getPodFimWatchers(pod *corev1.Pod) []*fimv1alpha1.FimWatcher {
+	if len(pod.Labels) == 0 {
+		fmt.Errorf("no FimWatchers found for pod %v because it has no labels", pod.Name)
+		return nil
+	}
+
+	list, err := fwc.fwLister.FimWatchers(pod.Namespace).List(labels.Everything())
+	if err != nil {
+		return nil
+	}
+
+	var fws []*fimv1alpha1.FimWatcher
+	for _, fw := range list {
+		if fw.Namespace != pod.Namespace {
+			continue
+		}
+		selector, err := metav1.LabelSelectorAsSelector(fw.Spec.Selector)
+		if err != nil {
+			fmt.Errorf("invalid selector: %v", err)
+			return nil
+		}
+
+		// If a FimWatcher with a nil or empty selector creeps in, it should match nothing, not everything.
+		if selector.Empty() || !selector.Matches(labels.Set(pod.Labels)) {
+			continue
+		}
+		fws = append(fws, fw)
+	}
+
+	if len(fws) == 0 {
+		fmt.Errorf("could not find FimWatcher for pod %s in namespace %s with labels: %v", pod.Name, pod.Namespace, pod.Labels)
+		return nil
+	}
+	if len(fws) > 1 {
+		// ControllerRef will ensure we don't do anything crazy, but more than one
+		// item in this list nevertheless constitutes user error.
+		runtime.HandleError(fmt.Errorf("user error! more than one %v is selecting pods with labels: %+v", fwc.Kind, pod.Labels))
+	}
+
+	return fws
 }
 
 func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1alpha1.FimWatcher) {
@@ -700,7 +696,6 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 		if err != nil {
 			return
 		}
-
 		if err := updateAnnotations(nil, map[string]string{
 			FimdHandleAnnotationKey: string(handlejson),
 		}, pod); err != nil {
