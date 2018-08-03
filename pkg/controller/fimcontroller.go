@@ -37,10 +37,13 @@ import (
 )
 
 const (
-	controllerAgentName = "fimcontroller"
+	fimcontrollerAgentName = "fimcontroller"
+	fimNamespace           = "fim"
+	fimdSvc                = "fimd-svc"
 
-	fimdSvc       = "fimd-svc"
-	fimdNamespace = "kube-system"
+	FimAnnotationKeyPrefix  = "fimcontroller.clustergarage.io/"
+	FimWatcherAnnotationKey = FimAnnotationKeyPrefix + "fim-watcher"
+	FimdHandleAnnotationKey = FimAnnotationKeyPrefix + "fimd-handle"
 
 	// SuccessSynced is used as part of the Event 'reason' when a FimWatcher is synced
 	SuccessSynced = "Synced"
@@ -48,17 +51,11 @@ const (
 	// is synced successfully
 	MessageResourceSynced = "FimWatcher synced successfully"
 
-	FimAnnotationKeyPrefix  = "fimcontroller.clustergarage.io/"
-	FimWatcherAnnotationKey = FimAnnotationKeyPrefix + "fim-watcher"
-	FimdHandleAnnotationKey = FimAnnotationKeyPrefix + "fimd-handle"
-
-	// The number of times we retry updating a FimWatcher's status.
+	// The number of times we retry updating a FimWatcher's status
 	statusUpdateRetries = 1
-
-	minReadySeconds = 60
 )
 
-// Controller is the controller implementation for FimWatcher resources
+// FimWatcherController is the controller implementation for FimWatcher resources
 type FimWatcherController struct {
 	// GroupVersionKind indicates the controller type.
 	// Different instances of this struct may handle different GVKs.
@@ -112,7 +109,7 @@ func NewFimWatcherController(kubeclientset kubernetes.Interface, fimclientset cl
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartLogging(glog.Infof)
 	eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: kubeclientset.CoreV1().Events("")})
-	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: controllerAgentName})
+	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: fimcontrollerAgentName})
 
 	fwc := &FimWatcherController{
 		GroupVersionKind: appsv1.SchemeGroupVersion.WithKind("FimWatcher"),
@@ -588,11 +585,6 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 
 	fwc.recorder.Event(fw, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
 
-	//if manageSubjectsErr == nil &&
-	//	updatedFW.Status.ObservablePods != len(updatedFW.Spec.Subjects) {
-	//	fwc.enqueueFimWatcherAfter(updatedFW, time.Duration(minReadySeconds)*time.Second)
-	//}
-
 	return manageSubjectsErr
 }
 
@@ -711,7 +703,7 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 }
 
 func (fwc *FimWatcherController) getHostURLFromService(pod *corev1.Pod) (string, error) {
-	svc, err := fwc.svcLister.Services(fimdNamespace).Get(fimdSvc)
+	svc, err := fwc.svcLister.Services(fimNamespace).Get(fimdSvc)
 	if err != nil {
 		fmt.Println(err)
 		return "", err
