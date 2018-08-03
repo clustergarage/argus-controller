@@ -1,6 +1,7 @@
 package fimcontroller
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -8,8 +9,10 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
+	errorsapi "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	errorsutil "k8s.io/apimachinery/pkg/util/errors"
 	coreclient "k8s.io/client-go/kubernetes/typed/core/v1"
 	corelisters "k8s.io/client-go/listers/core/v1"
@@ -142,7 +145,7 @@ func connectToFimdClient(hostURL string) FimdConnection {
 	return fc
 }
 
-func addFimdWatcher(hostURL string, config *pb.FimdConfig) *pb.FimdHandle {
+func addFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 	fmt.Println(" ### [gRPC] ADD:", len(config.ContainerId), "|", hostURL)
 
 	fc := connectToFimdClient(hostURL)
@@ -150,19 +153,18 @@ func addFimdWatcher(hostURL string, config *pb.FimdConfig) *pb.FimdHandle {
 	defer fc.cancel()
 
 	if fc.client == nil {
-		fmt.Println("could not connect to fimd client")
-		return nil
+		return errorsapi.NewConflict(schema.GroupResource{Resource: "hosts"},
+			hostURL, errors.New("could not connect to fimd client"))
 	}
 
-	response, err := fc.client.CreateWatch(fc.ctx, config)
+	_, err := fc.client.CreateWatch(fc.ctx, config)
 	if err != nil {
-		fmt.Printf("could not create watch: %v\n", err)
-		return nil
+		return err
 	}
-	return response
+	return nil
 }
 
-func removeFimdWatcher(hostURL string, config *pb.FimdConfig) {
+func removeFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 	fmt.Println(" ### [gRPC] RM:", len(config.ContainerId), "|", hostURL)
 
 	fc := connectToFimdClient(hostURL)
@@ -170,13 +172,13 @@ func removeFimdWatcher(hostURL string, config *pb.FimdConfig) {
 	defer fc.cancel()
 
 	if fc.client == nil {
-		fmt.Println("could not connect to fimd client")
-		return
+		return errorsapi.NewConflict(schema.GroupResource{Resource: "hosts"},
+			hostURL, errors.New("could not connect to fimd client"))
 	}
 
 	_, err := fc.client.DestroyWatch(fc.ctx, config)
 	if err != nil {
-		fmt.Printf("could not destroy watch: %v\n", err)
-		return
+		return err
 	}
+	return nil
 }

@@ -1,7 +1,6 @@
 package fimcontroller
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -41,9 +40,8 @@ const (
 	fimNamespace           = "fim"
 	fimdSvc                = "fimd-svc"
 
-	FimAnnotationKeyPrefix  = "fimcontroller.clustergarage.io/"
+	FimAnnotationKeyPrefix  = "clustergarage.io/"
 	FimWatcherAnnotationKey = FimAnnotationKeyPrefix + "fim-watcher"
-	FimdHandleAnnotationKey = FimAnnotationKeyPrefix + "fimd-handle"
 
 	// SuccessSynced is used as part of the Event 'reason' when a FimWatcher is synced
 	SuccessSynced = "Synced"
@@ -219,15 +217,15 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 			if po.Spec.NodeName != pod.Spec.NodeName {
 				continue
 			}
-			if _, found := po.GetAnnotations()[FimWatcherAnnotationKey]; !found {
-				fws := fwc.getPodFimWatchers(po)
-				if len(fws) == 0 {
-					continue
-				}
-				glog.V(4).Infof("Unannotated pod %s found: %#v.", po.Name, po)
-				for _, fw := range fws {
-					fwc.enqueueFimWatcher(fw)
-				}
+			fws := fwc.getPodFimWatchers(po)
+			if len(fws) == 0 {
+				continue
+			}
+
+			updateAnnotations([]string{FimWatcherAnnotationKey}, nil, po)
+			glog.V(4).Infof("Unannotated pod %s found: %#v.", po.Name, po)
+			for _, fw := range fws {
+				fwc.enqueueFimWatcher(fw)
 			}
 		}
 		return
@@ -239,6 +237,7 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 	if len(fws) == 0 {
 		return
 	}
+
 	glog.V(4).Infof("Unannotated pod %s found: %#v.", pod.Name, pod)
 	for _, fw := range fws {
 		fwc.enqueueFimWatcher(fw)
@@ -323,7 +322,7 @@ func (fwc *FimWatcherController) deletePod(obj interface{}) {
 				continue
 			}
 			if _, found := po.GetAnnotations()[FimWatcherAnnotationKey]; found {
-				updateAnnotations([]string{FimWatcherAnnotationKey, FimdHandleAnnotationKey}, nil, po)
+				updateAnnotations([]string{FimWatcherAnnotationKey}, nil, po)
 			}
 		}
 		glog.V(4).Infof("Daemon pod %s/%s deleted through %v, timestamp %+v: %#v.", pod.Namespace, pod.Name, runtime.GetCaller(), pod.DeletionTimestamp, pod)
@@ -435,27 +434,31 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 	}
 
 	var podsToUpdate []*corev1.Pod
+
 	for _, pod := range rmPods {
-		if _, found := pod.GetAnnotations()[FimdHandleAnnotationKey]; found {
+		if _, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found {
 			cids := getPodContainerIDs(pod)
 			if len(cids) > 0 {
 				hostURL, err := fwc.getHostURLFromService(pod)
 				if err != nil {
 					return err
 				}
-				removeFimdWatcher(hostURL, &pb.FimdConfig{
+				if err := removeFimdWatcher(hostURL, &pb.FimdConfig{
 					HostUid:     pod.Spec.NodeName,
 					ContainerId: cids,
-				})
+				}); err != nil {
+					return err
+				}
 			}
 		}
 
-		err := updateAnnotations([]string{FimWatcherAnnotationKey, FimdHandleAnnotationKey}, nil, pod)
+		err := updateAnnotations([]string{FimWatcherAnnotationKey}, nil, pod)
 		if err != nil {
 			return err
 		}
 		podsToUpdate = append(podsToUpdate, pod)
 	}
+
 	for _, pod := range addPods {
 		go fwc.updatePodOnceValid(pod, fw)
 
@@ -627,22 +630,27 @@ func (fwc *FimWatcherController) getPodFimWatchers(pod *corev1.Pod) []*fimv1alph
 		// item in this list nevertheless constitutes user error.
 		runtime.HandleError(fmt.Errorf("user error! more than one %v is selecting pods with labels: %+v", fwc.Kind, pod.Labels))
 	}
-
 	return fws
 }
 
 func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1alpha1.FimWatcher) {
 	var cids []string
 	var nodeName, hostURL string
-	retry.RetryOnConflict(wait.Backoff{
+
+	// @TODO: document this
+	retryErr := retry.RetryOnConflict(wait.Backoff{
 		// @TODO: re-evaluate these values
 		Steps:    10,
 		Duration: 1 * time.Second,
 		Factor:   2.0,
 		Jitter:   0.1,
 	}, func() error {
+		var po *corev1.Pod
 		var err error
-		po, err := fwc.podLister.Pods(fw.Namespace).Get(pod.Name)
+		// be sure to clear all slice elements first in case it's retrying
+		cids = cids[:0]
+
+		po, err = fwc.podLister.Pods(fw.Namespace).Get(pod.Name)
 		if err != nil {
 			return err
 		}
@@ -668,32 +676,37 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 		}
 
 		nodeName = po.Spec.NodeName
-		hostURL, err = fwc.getHostURLFromService(po)
+		if nodeName == "" {
+			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
+				po.Name, errors.New("pod node name is not available"))
+			return err
+		}
 
+		var hostErr error
+		hostURL, hostErr = fwc.getHostURLFromService(po)
+		if hostErr != nil || hostURL == "" {
+			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
+				po.Name, errors.New("pod host is not available"))
+		}
 		return err
 	})
 
-	if len(cids) == 0 ||
-		nodeName == "" ||
-		hostURL == "" {
+	if retryErr != nil {
 		return
 	}
 
-	if fimdHandle := addFimdWatcher(hostURL, &pb.FimdConfig{
-		HostUid:     nodeName,
-		ContainerId: cids,
-		Subject:     fwc.getFimWatcherSubjects(fw),
-	}); fimdHandle != nil {
-		handlejson, err := json.Marshal(fimdHandle)
-		if err != nil {
-			return
-		}
-		if err := updateAnnotations(nil, map[string]string{
-			FimdHandleAnnotationKey: string(handlejson),
-		}, pod); err != nil {
-			return
-		}
+	// @TODO: document this
+	retryErr = retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var err error
+		err = addFimdWatcher(hostURL, &pb.FimdConfig{
+			HostUid:     nodeName,
+			ContainerId: cids,
+			Subject:     fwc.getFimWatcherSubjects(fw),
+		})
+		return err
+	})
 
+	if retryErr != nil {
 		updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(pod.Namespace), fwc.podLister,
 			fw.Namespace, pod.Name, func(po *corev1.Pod) error {
 				po.Annotations = pod.Annotations
@@ -705,14 +718,12 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 func (fwc *FimWatcherController) getHostURLFromService(pod *corev1.Pod) (string, error) {
 	svc, err := fwc.svcLister.Services(fimNamespace).Get(fimdSvc)
 	if err != nil {
-		fmt.Println(err)
 		return "", err
 	}
 	port, err := podutil.FindPort(pod, &svc.Spec.Ports[0])
 	if err != nil {
 		return "", err
 	}
-	fmt.Println(svc.Spec.ClusterIP, port)
 	return fmt.Sprintf("%s:%d", svc.Spec.ClusterIP, port), nil
 	//return "0.0.0.0:50051", nil
 }
