@@ -36,7 +36,7 @@ import (
 )
 
 const (
-	fimcontrollerAgentName = "fimcontroller"
+	fimcontrollerAgentName = "fim-controller"
 	fimNamespace           = "fim"
 	fimdSvc                = "fimd-svc"
 
@@ -44,10 +44,14 @@ const (
 	FimWatcherAnnotationKey = FimAnnotationKeyPrefix + "fim-watcher"
 
 	// SuccessSynced is used as part of the Event 'reason' when a FimWatcher is synced
-	SuccessSynced = "Synced"
+	SuccessSynced  = "Synced"
+	SuccessAdded   = "Added"
+	SuccessRemoved = "Removed"
 	// MessageResourceSynced is the message used for an Event fired when a FimWatcher
 	// is synced successfully
-	MessageResourceSynced = "FimWatcher synced successfully"
+	MessageResourceSynced  = "FimWatcher synced successfully"
+	MessageResourceAdded   = "Added fimd watcher on %v"
+	MessageResourceRemoved = "Removed fimd watcher on %v"
 
 	// The number of times we retry updating a FimWatcher's status
 	statusUpdateRetries = 1
@@ -178,8 +182,7 @@ func (fwc *FimWatcherController) updateFimWatcher(old, new interface{}) {
 	oldFW := old.(*fimv1alpha1.FimWatcher)
 	newFW := new.(*fimv1alpha1.FimWatcher)
 
-	subjectsChanged := !reflect.DeepEqual(newFW.Spec.Subjects, oldFW.Spec.Subjects)
-	if subjectsChanged {
+	if subjectsChanged := !reflect.DeepEqual(newFW.Spec.Subjects, oldFW.Spec.Subjects); subjectsChanged {
 		// add new fimwatcher definitions
 		selector, err := metav1.LabelSelectorAsSelector(newFW.Spec.Selector)
 		if err != nil {
@@ -449,6 +452,8 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 				}); err != nil {
 					return err
 				}
+
+				fwc.recorder.Eventf(fw, corev1.EventTypeNormal, SuccessRemoved, MessageResourceRemoved, pod.Spec.NodeName)
 			}
 		}
 
@@ -565,7 +570,8 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 	}
 
 	var manageSubjectsErr error
-	if (fwNeedsSync && fw.DeletionTimestamp == nil) ||
+	if fwNeedsSync &&
+		fw.DeletionTimestamp == nil ||
 		len(rmPods) > 0 ||
 		len(addPods) > 0 {
 		manageSubjectsErr = fwc.manageObserverPods(rmPods, addPods, fw)
@@ -586,7 +592,7 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 		return err
 	}
 
-	fwc.recorder.Event(fw, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
+	//fwc.recorder.Event(fw, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
 
 	return manageSubjectsErr
 }
@@ -638,7 +644,7 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 	var nodeName, hostURL string
 
 	// @TODO: document this
-	retryErr := retry.RetryOnConflict(wait.Backoff{
+	if retryErr := retry.RetryOnConflict(wait.Backoff{
 		// @TODO: re-evaluate these values
 		Steps:    10,
 		Duration: 1 * time.Second,
@@ -689,14 +695,12 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 				po.Name, errors.New("pod host is not available"))
 		}
 		return err
-	})
-
-	if retryErr != nil {
+	}); retryErr != nil {
 		return
 	}
 
 	// @TODO: document this
-	retryErr = retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+	if retryErr := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		var err error
 		err = addFimdWatcher(hostURL, &pb.FimdConfig{
 			HostUid:     nodeName,
@@ -704,15 +708,15 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 			Subject:     fwc.getFimWatcherSubjects(fw),
 		})
 		return err
-	})
-
-	if retryErr != nil {
+	}); retryErr != nil {
 		updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(pod.Namespace), fwc.podLister,
 			fw.Namespace, pod.Name, func(po *corev1.Pod) error {
 				po.Annotations = pod.Annotations
 				return nil
 			})
 	}
+
+	fwc.recorder.Eventf(fw, corev1.EventTypeNormal, SuccessAdded, MessageResourceAdded, nodeName)
 }
 
 func (fwc *FimWatcherController) getHostURLFromService(pod *corev1.Pod) (string, error) {

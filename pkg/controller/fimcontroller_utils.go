@@ -61,8 +61,7 @@ func calculateStatus(fw *fimv1alpha1.FimWatcher, filteredPods []*corev1.Pod, man
 			observablePodsCount++
 		}
 	}
-
-	newStatus.ObservablePods = fmt.Sprintf("%d (%d subjects)", int32(observablePodsCount), int32(observablePodsCount*len(fw.Spec.Subjects)))
+	newStatus.ObservablePods = int32(observablePodsCount) //int32(observablePodsCount*len(fw.Spec.Subjects))
 	return newStatus
 }
 
