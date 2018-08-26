@@ -728,16 +728,18 @@ func (fwc *FimWatcherController) getHostURLFromService(pod *corev1.Pod) (string,
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s:%d", svc.Spec.ClusterIP, port), nil
-	//return "0.0.0.0:50051", nil
+	fmt.Printf("%s:%d\n", svc.Spec.ClusterIP, port)
+	//return fmt.Sprintf("%s:%d", svc.Spec.ClusterIP, port), nil
+	return "0.0.0.0:50051", nil
 }
 
 func (fwc *FimWatcherController) getFimWatcherSubjects(fw *fimv1alpha1.FimWatcher) []*pb.FimWatcherSubject {
 	var subjects []*pb.FimWatcherSubject
 	for _, s := range fw.Spec.Subjects {
 		subjects = append(subjects, &pb.FimWatcherSubject{
-			Path:  s.Paths,
-			Event: s.Events,
+			Path:      s.Paths,
+			Event:     s.Events,
+			Recursive: s.Recursive,
 		})
 	}
 	return subjects

@@ -135,7 +135,6 @@ func connectToFimdClient(hostURL string) FimdConnection {
 
 	fc.conn, err = grpc.Dial(hostURL, grpc.WithInsecure())
 	if err != nil {
-		fmt.Printf("did not connect: %v\n", err)
 		return fc
 	}
 	// @TODO: re-evaluate this timeout
