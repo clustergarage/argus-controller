@@ -182,7 +182,10 @@ func (fwc *FimWatcherController) updateFimWatcher(old, new interface{}) {
 	oldFW := old.(*fimv1alpha1.FimWatcher)
 	newFW := new.(*fimv1alpha1.FimWatcher)
 
-	if subjectsChanged := !reflect.DeepEqual(newFW.Spec.Subjects, oldFW.Spec.Subjects); subjectsChanged {
+	logFormatChanged := !reflect.DeepEqual(newFW.Spec.LogFormat, oldFW.Spec.LogFormat)
+	subjectsChanged := !reflect.DeepEqual(newFW.Spec.Subjects, oldFW.Spec.Subjects)
+
+	if logFormatChanged || subjectsChanged {
 		// add new fimwatcher definitions
 		selector, err := metav1.LabelSelectorAsSelector(newFW.Spec.Selector)
 		if err != nil {
