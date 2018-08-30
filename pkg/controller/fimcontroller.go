@@ -447,7 +447,7 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 					return err
 				}
 				if err := removeFimdWatcher(hostURL, &pb.FimdConfig{
-					HostUid:     pod.Spec.NodeName,
+					NodeName:    pod.Spec.NodeName,
 					ContainerId: cids,
 				}); err != nil {
 					return err
@@ -703,9 +703,11 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 	if retryErr := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		var err error
 		err = addFimdWatcher(hostURL, &pb.FimdConfig{
-			HostUid:     nodeName,
+			NodeName:    nodeName,
+			PodName:     pod.Name,
 			ContainerId: cids,
 			Subject:     fwc.getFimWatcherSubjects(fw),
+			LogFormat:   fw.Spec.LogFormat,
 		})
 		return err
 	}); retryErr != nil {

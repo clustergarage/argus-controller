@@ -19,8 +19,9 @@ type FimWatcher struct {
 
 // FimWatcherSpec is the spec for a FimWatcher resource
 type FimWatcherSpec struct {
-	Selector *metav1.LabelSelector `json:"selector" protobuf:"bytes,1,opt,name=selector"`
-	Subjects []*FimWatcherSubject  `json:"subjects" protobuf:"bytes,2,opt,name=subjects"`
+	Selector  *metav1.LabelSelector `json:"selector" protobuf:"bytes,1,opt,name=selector"`
+	Subjects  []*FimWatcherSubject  `json:"subjects" protobuf:"bytes,2,opt,name=subjects"`
+	LogFormat string                `json:"logFormat" protobuf:"bytes,3,opt,name=logFormat"`
 }
 
 // FimWatcherSubject is the spec for a FimWatcherSubject resource
