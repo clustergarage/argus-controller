@@ -734,8 +734,8 @@ func (fwc *FimWatcherController) getHostURLFromService(pod *corev1.Pod) (string,
 		return "", err
 	}
 	fmt.Printf("%s:%d\n", svc.Spec.ClusterIP, port)
-	return fmt.Sprintf("%s:%d", svc.Spec.ClusterIP, port), nil
-	//return "0.0.0.0:50051", nil
+	//return fmt.Sprintf("%s:%d", svc.Spec.ClusterIP, port), nil
+	return "0.0.0.0:50051", nil
 }
 
 func (fwc *FimWatcherController) getFimWatcherSubjects(fw *fimv1alpha1.FimWatcher) []*pb.FimWatcherSubject {
@@ -744,6 +744,7 @@ func (fwc *FimWatcherController) getFimWatcherSubjects(fw *fimv1alpha1.FimWatche
 		subjects = append(subjects, &pb.FimWatcherSubject{
 			Path:      s.Paths,
 			Event:     s.Events,
+			OnlyDir:   s.OnlyDir,
 			Recursive: s.Recursive,
 		})
 	}

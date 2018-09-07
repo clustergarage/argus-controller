@@ -21,14 +21,15 @@ type FimWatcher struct {
 type FimWatcherSpec struct {
 	Selector  *metav1.LabelSelector `json:"selector" protobuf:"bytes,1,opt,name=selector"`
 	Subjects  []*FimWatcherSubject  `json:"subjects" protobuf:"bytes,2,opt,name=subjects"`
-	LogFormat string                `json:"logFormat" protobuf:"bytes,3,opt,name=logFormat"`
+	LogFormat string                `json:"logFormat,omitempty" protobuf:"bytes,3,opt,name=logFormat"`
 }
 
 // FimWatcherSubject is the spec for a FimWatcherSubject resource
 type FimWatcherSubject struct {
 	Paths     []string `json:"paths" protobuf:"bytes,1,opt,name=paths"`
 	Events    []string `json:"events" protobuf:"bytes,2,opt,name=events"`
-	Recursive bool     `json:"recursive" protobuf:"bytes,3,opt,name=recursive"`
+	OnlyDir   bool     `json:"onlyDir,omitempty" protobuf:"bytes,3,opt,name=onlyDir"`
+	Recursive bool     `json:"recursive,omitempty" protobuf:"bytes,4,opt,name=recursive"`
 }
 
 // FimWatcherStatus is the status for a FimWatcher resource
