@@ -710,6 +710,7 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 			PodName:     pod.Name,
 			ContainerId: cids,
 			Subject:     fwc.getFimWatcherSubjects(fw),
+			Ignore:      fwc.getFimWatcherIgnore(fw),
 			LogFormat:   fw.Spec.LogFormat,
 		})
 		return err
@@ -749,4 +750,13 @@ func (fwc *FimWatcherController) getFimWatcherSubjects(fw *fimv1alpha1.FimWatche
 		})
 	}
 	return subjects
+}
+
+func (fwc *FimWatcherController) getFimWatcherIgnore(fw *fimv1alpha1.FimWatcher) *pb.FimWatcherIgnore {
+	var paths []string
+	if len(fw.Spec.Ignore.Paths) > 0 {
+		paths = fw.Spec.Ignore.Paths
+	}
+	// @TODO: support reading from file similar to .gitignore/.dockerignore
+	return &pb.FimWatcherIgnore{Path: paths}
 }
