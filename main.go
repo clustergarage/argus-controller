@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/golang/glog"
 	kubeinformers "k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -38,6 +39,7 @@ func getKubernetesClient() (kubernetes.Interface, clientset.Interface) {
 
 func main() {
 	flag.Parse()
+	defer glog.Flush()
 
 	// set up signals so we handle the first shutdown signal gracefully
 	stopCh := signals.SetupSignalHandler()

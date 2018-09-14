@@ -106,7 +106,7 @@ func NewFimWatcherController(kubeclientset kubernetes.Interface, fimclientset cl
 	// Add fimcontroller types to the default Kubernetes Scheme so Events can be
 	// logged for fimcontroller types.
 	fimscheme.AddToScheme(scheme.Scheme)
-	glog.V(4).Info("Creating event broadcaster")
+	glog.Info("Creating event broadcaster")
 
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartLogging(glog.Infof)
@@ -426,11 +426,11 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 
 	if len(rmPods) > 0 {
 		fwc.expectations.ExpectDeletions(fwKey, len(rmPods))
-		glog.V(2).Infof("Too many subjects for %v %s/%s, need %d, deleting %d", fwc.Kind, fw.Namespace, fw.Name, len(fw.Spec.Subjects), len(rmPods))
+		glog.Infof("Too many subjects for %v %s/%s, need %d, deleting %d", fwc.Kind, fw.Namespace, fw.Name, len(fw.Spec.Subjects), len(rmPods))
 	}
 	if len(addPods) > 0 {
 		fwc.expectations.ExpectCreations(fwKey, len(addPods))
-		glog.V(2).Infof("Too few subjects for %v %s/%s, need %d, creating %d", fwc.Kind, fw.Namespace, fw.Name, len(fw.Spec.Subjects), len(addPods))
+		glog.Infof("Too few subjects for %v %s/%s, need %d, creating %d", fwc.Kind, fw.Namespace, fw.Name, len(fw.Spec.Subjects), len(addPods))
 	}
 
 	var podsToUpdate []*corev1.Pod
@@ -488,7 +488,7 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 func (fwc *FimWatcherController) syncHandler(key string) error {
 	startTime := time.Now()
 	defer func() {
-		glog.V(4).Infof("Finished syncing %v %q (%v)", fwc.Kind, key, time.Since(startTime))
+		glog.Infof("Finished syncing %v %q (%v)", fwc.Kind, key, time.Since(startTime))
 	}()
 
 	// Convert the namespace/name string into a distinct namespace and name
