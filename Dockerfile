@@ -1,7 +1,9 @@
-FROM golang:latest as builder
+FROM golang:1.11 as builder
+ENV GO111MODULE on
 WORKDIR /go/src/clustergarage.io/fim-controller/
 COPY . /go/src/clustergarage.io/fim-controller/
-RUN CGO_ENABLED=0 go build -a -installsuffix cgo -o fimcontroller .
+RUN go mod download && \
+  CGO_ENABLED=0 go build -a -installsuffix cgo -o fimcontroller .
 
 FROM scratch
 COPY --from=builder /go/src/clustergarage.io/fim-controller/fimcontroller /
