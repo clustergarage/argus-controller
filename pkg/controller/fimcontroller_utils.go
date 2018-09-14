@@ -2,7 +2,6 @@ package fimcontroller
 
 import (
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/golang/glog"
@@ -144,8 +143,6 @@ func connectToFimdClient(hostURL string) FimdConnection {
 }
 
 func addFimdWatcher(hostURL string, config *pb.FimdConfig) error {
-	fmt.Println(" ### [gRPC] ADD:", len(config.ContainerId), "|", hostURL)
-
 	fc := connectToFimdClient(hostURL)
 	defer fc.conn.Close()
 	defer fc.cancel()
@@ -163,8 +160,6 @@ func addFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 }
 
 func removeFimdWatcher(hostURL string, config *pb.FimdConfig) error {
-	fmt.Println(" ### [gRPC] RM:", len(config.ContainerId), "|", hostURL)
-
 	fc := connectToFimdClient(hostURL)
 	defer fc.conn.Close()
 	defer fc.cancel()

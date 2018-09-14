@@ -204,7 +204,6 @@ func (fwc *FimWatcherController) updateFimWatcher(old, new interface{}) {
 // When a pod is created, enqueue the fim watcher that manages it and update its expectations.
 func (fwc *FimWatcherController) addPod(obj interface{}) {
 	pod := obj.(*corev1.Pod)
-	fmt.Println(" [addPod] ", pod.Name)
 
 	if pod.DeletionTimestamp != nil {
 		// on a restart of the controller manager, it's possible a new pod shows up in a state that
@@ -256,7 +255,6 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 func (fwc *FimWatcherController) updatePod(old, new interface{}) {
 	newPod := new.(*corev1.Pod)
 	oldPod := old.(*corev1.Pod)
-	//fmt.Println(" [updatePod] ", oldPod.Name, newPod.Name)
 
 	if newPod.ResourceVersion == oldPod.ResourceVersion {
 		// Periodic resync will send update events for all known pods.
@@ -284,7 +282,6 @@ func (fwc *FimWatcherController) updatePod(old, new interface{}) {
 // obj could be an *v1.Pod, or a DeletionFinalStateUnknown marker item.
 func (fwc *FimWatcherController) deletePod(obj interface{}) {
 	pod, ok := obj.(*corev1.Pod)
-	fmt.Println(" [deletePod] ", pod.Name)
 
 	// When a delete is dropped, the relist will notice a pod in the store not
 	// in the list, leading to the insertion of a tombstone object which contains
@@ -340,7 +337,6 @@ func (fwc *FimWatcherController) deletePod(obj interface{}) {
 // passed resources of any type other than FimWatcher.
 func (fwc *FimWatcherController) enqueueFimWatcher(obj interface{}) {
 	key, err := controller.KeyFunc(obj)
-	fmt.Println(" [enqueueFimWatcher] ", key)
 	if err != nil {
 		runtime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
 		return
@@ -422,8 +418,6 @@ func (fwc *FimWatcherController) processNextWorkItem() bool {
 // manageObserverPods checks and updates observers for the given FimWatcher.
 // It will requeue the fim watcher in case of an error while creating/deleting pods.
 func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPods []*corev1.Pod, fw *fimv1alpha1.FimWatcher) error {
-	fmt.Println("     [manageObserverPods] ", "rm:", len(rmPods), "| add:", len(addPods))
-
 	fwKey, err := controller.KeyFunc(fw)
 	if err != nil {
 		runtime.HandleError(fmt.Errorf("Couldn't get key for %v %#v: %v", fwc.Kind, fw, err))
@@ -503,8 +497,6 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 		runtime.HandleError(fmt.Errorf("invalid resource key: %s", key))
 		return nil
 	}
-
-	fmt.Println("   [syncHandler] ", namespace, name)
 
 	// Get the FimWatcher resource with this namespace/name
 	fw, err := fwc.fwLister.FimWatchers(namespace).Get(name)
@@ -733,7 +725,6 @@ func (fwc *FimWatcherController) getHostURLFromService(pod *corev1.Pod) (string,
 	if err != nil {
 		return "", err
 	}
-	fmt.Printf("%s:%d\n", svc.Spec.ClusterIP, port)
 	return fmt.Sprintf("%s:%d", svc.Spec.ClusterIP, port), nil
 	//return "0.0.0.0:50051", nil
 }
