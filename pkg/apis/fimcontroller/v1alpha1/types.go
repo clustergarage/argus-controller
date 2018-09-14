@@ -20,21 +20,17 @@ type FimWatcher struct {
 type FimWatcherSpec struct {
 	Selector  *metav1.LabelSelector `json:"selector" protobuf:"bytes,1,req,name=selector"`
 	Subjects  []*FimWatcherSubject  `json:"subjects" protobuf:"bytes,2,rep,name=subjects"`
-	Ignore    *FimWatcherIgnore     `json:"ignore,omitempty" protobuf:"bytes,3,rep,name=ignore"`
-	LogFormat string                `json:"logFormat,omitempty" protobuf:"bytes,4,opt,name=logFormat"`
+	LogFormat string                `json:"logFormat,omitempty" protobuf:"bytes,3,opt,name=logFormat"`
 }
 
 // FimWatcherSubject is the spec for a FimWatcherSubject resource
 type FimWatcherSubject struct {
 	Paths     []string `json:"paths" protobuf:"bytes,1,rep,name=paths"`
 	Events    []string `json:"events" protobuf:"bytes,2,rep,name=events"`
-	OnlyDir   bool     `json:"onlyDir,omitempty" protobuf:"bytes,3,opt,name=onlyDir"`
-	Recursive bool     `json:"recursive,omitempty" protobuf:"bytes,4,opt,name=recursive"`
-}
-
-// FimWatcherIgnore is the spec for a FimWatcherIgnore resource
-type FimWatcherIgnore struct {
-	Paths []string `json:"paths,omitempty" protobuf:"bytes,1,rep,name=paths"`
+	Ignore    []string `json:"ignore,omitempty" protobuf:"bytes,3,rep,name=ignore"`
+	OnlyDir   bool     `json:"onlyDir,omitempty" protobuf:"bytes,4,opt,name=onlyDir"`
+	Recursive bool     `json:"recursive,omitempty" protobuf:"bytes,5,opt,name=recursive"`
+	MaxDepth  int32    `json:"maxDepth,omitempty" protobuf:"bytes,6,opt,name=maxDepth"`
 }
 
 // FimWatcherStatus is the status for a FimWatcher resource
