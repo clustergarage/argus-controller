@@ -32,7 +32,7 @@ import (
 	fimscheme "clustergarage.io/fim-controller/pkg/client/clientset/versioned/scheme"
 	informers "clustergarage.io/fim-controller/pkg/client/informers/externalversions/fimcontroller/v1alpha1"
 	listers "clustergarage.io/fim-controller/pkg/client/listers/fimcontroller/v1alpha1"
-	pb "clustergarage.io/fim-proto/golang"
+	pb "github.com/clustergarage/fim-proto/golang"
 )
 
 const (

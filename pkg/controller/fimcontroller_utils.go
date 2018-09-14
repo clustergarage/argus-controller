@@ -20,7 +20,7 @@ import (
 
 	fimv1alpha1 "clustergarage.io/fim-controller/pkg/apis/fimcontroller/v1alpha1"
 	fimv1alpha1client "clustergarage.io/fim-controller/pkg/client/clientset/versioned/typed/fimcontroller/v1alpha1"
-	pb "clustergarage.io/fim-proto/golang"
+	pb "github.com/clustergarage/fim-proto/golang"
 )
 
 type FimdConnection struct {
