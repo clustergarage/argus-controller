@@ -19,6 +19,7 @@ import (
 var (
 	masterURL  string
 	kubeconfig string
+	fimdURL    string
 )
 
 func getKubernetesClient() (kubernetes.Interface, clientset.Interface) {
@@ -38,6 +39,11 @@ func getKubernetesClient() (kubernetes.Interface, clientset.Interface) {
 }
 
 func main() {
+	// Override --alsologtostderr default value.
+	if alsoLogToStderr := flag.Lookup("alsologtostderr"); alsoLogToStderr != nil {
+		alsoLogToStderr.DefValue = "true"
+		alsoLogToStderr.Value.Set("true")
+	}
 	flag.Parse()
 	defer glog.Flush()
 
@@ -51,7 +57,8 @@ func main() {
 	controller := fimcontroller.NewFimWatcherController(kubeclientset, fimclientset,
 		fimInformerFactory.Fimcontroller().V1alpha1().FimWatchers(),
 		kubeInformerFactory.Core().V1().Pods(),
-		kubeInformerFactory.Core().V1().Services())
+		kubeInformerFactory.Core().V1().Services(),
+		fimdURL)
 
 	go kubeInformerFactory.Start(stopCh)
 	go fimInformerFactory.Start(stopCh)
@@ -64,4 +71,5 @@ func main() {
 func init() {
 	flag.StringVar(&masterURL, "master", "", "The address of the Kubernetes API server. Overrides any value in kubeconfig. Only required if out-of-cluster.")
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig. Only required if out-of-cluster.")
+	flag.StringVar(&fimdURL, "fimd", "", "The address of the FimD server. Only required if daemon is running out-of-cluster.")
 }

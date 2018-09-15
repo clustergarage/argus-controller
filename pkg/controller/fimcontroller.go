@@ -57,6 +57,9 @@ const (
 	statusUpdateRetries = 1
 )
 
+// FimD server to connect to if daemon is out-of-cluster.
+var fimdURL string
+
 // FimWatcherController is the controller implementation for FimWatcher resources
 type FimWatcherController struct {
 	// GroupVersionKind indicates the controller type.
@@ -100,7 +103,7 @@ type FimWatcherController struct {
 // NewFimWatcherController returns a new fim watch controller
 func NewFimWatcherController(kubeclientset kubernetes.Interface, fimclientset clientset.Interface,
 	fwInformer informers.FimWatcherInformer, podInformer coreinformers.PodInformer,
-	svcInformer coreinformers.ServiceInformer) *FimWatcherController {
+	svcInformer coreinformers.ServiceInformer, fimdURL string) *FimWatcherController {
 
 	// Create event broadcaster
 	// Add fimcontroller types to the default Kubernetes Scheme so Events can be
@@ -309,7 +312,8 @@ func (fwc *FimWatcherController) deletePod(obj interface{}) {
 		if err != nil {
 			return
 		}
-		glog.V(4).Infof("Annotated pod %s/%s deleted through %v, timestamp %+v: %#v.", pod.Namespace, pod.Name, runtime.GetCaller(), pod.DeletionTimestamp, pod)
+		glog.V(4).Infof("Annotated pod %s/%s deleted through %v, timestamp %+v: %#v.",
+			pod.Namespace, pod.Name, runtime.GetCaller(), pod.DeletionTimestamp, pod)
 		fwc.expectations.DeletionObserved(fwKey)
 		fwc.enqueueFimWatcher(fw)
 	}
@@ -328,7 +332,8 @@ func (fwc *FimWatcherController) deletePod(obj interface{}) {
 				updateAnnotations([]string{FimWatcherAnnotationKey}, nil, po)
 			}
 		}
-		glog.V(4).Infof("Daemon pod %s/%s deleted through %v, timestamp %+v: %#v.", pod.Namespace, pod.Name, runtime.GetCaller(), pod.DeletionTimestamp, pod)
+		glog.V(4).Infof("Daemon pod %s/%s deleted through %v, timestamp %+v: %#v.",
+			pod.Namespace, pod.Name, runtime.GetCaller(), pod.DeletionTimestamp, pod)
 	}
 }
 
@@ -426,11 +431,13 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 
 	if len(rmPods) > 0 {
 		fwc.expectations.ExpectDeletions(fwKey, len(rmPods))
-		glog.Infof("Too many subjects for %v %s/%s, need %d, deleting %d", fwc.Kind, fw.Namespace, fw.Name, len(fw.Spec.Subjects), len(rmPods))
+		glog.Infof("Too many subjects for %v %s/%s, need %d, deleting %d",
+			fwc.Kind, fw.Namespace, fw.Name, len(fw.Spec.Subjects), len(rmPods))
 	}
 	if len(addPods) > 0 {
 		fwc.expectations.ExpectCreations(fwKey, len(addPods))
-		glog.Infof("Too few subjects for %v %s/%s, need %d, creating %d", fwc.Kind, fw.Namespace, fw.Name, len(fw.Spec.Subjects), len(addPods))
+		glog.Infof("Too few subjects for %v %s/%s, need %d, creating %d",
+			fwc.Kind, fw.Namespace, fw.Name, len(fw.Spec.Subjects), len(addPods))
 	}
 
 	var podsToUpdate []*corev1.Pod
@@ -717,6 +724,10 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 }
 
 func (fwc *FimWatcherController) getHostURLFromService(pod *corev1.Pod) (string, error) {
+	if fimdURL != "" {
+		return fimdURL, nil
+	}
+
 	svc, err := fwc.svcLister.Services(fimNamespace).Get(fimdSvc)
 	if err != nil {
 		return "", err
@@ -726,7 +737,6 @@ func (fwc *FimWatcherController) getHostURLFromService(pod *corev1.Pod) (string,
 		return "", err
 	}
 	return fmt.Sprintf("%s:%d", svc.Spec.ClusterIP, port), nil
-	//return "0.0.0.0:50051", nil
 }
 
 func (fwc *FimWatcherController) getFimWatcherSubjects(fw *fimv1alpha1.FimWatcher) []*pb.FimWatcherSubject {

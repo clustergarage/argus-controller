@@ -109,7 +109,7 @@ func updatePodWithRetries(podClient coreclient.PodInterface, podLister coreliste
 	// Ignore the precondition violated error, this pod is already updated
 	// with the desired label.
 	if retryErr == errorsutil.ErrPreconditionViolated {
-		glog.V(4).Infof("Pod %s/%s precondition doesn't hold, skip updating it.", namespace, name)
+		glog.Infof("Pod %s/%s precondition doesn't hold, skip updating it.", namespace, name)
 		retryErr = nil
 	}
 
@@ -143,6 +143,8 @@ func connectToFimdClient(hostURL string) FimdConnection {
 }
 
 func addFimdWatcher(hostURL string, config *pb.FimdConfig) error {
+	glog.Infof("Sending CreateWatch call to FimD daemon, host: %s, request: %#v)", hostURL, config)
+
 	fc := connectToFimdClient(hostURL)
 	defer fc.conn.Close()
 	defer fc.cancel()
@@ -152,7 +154,8 @@ func addFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 			hostURL, errors.New("could not connect to fimd client"))
 	}
 
-	_, err := fc.client.CreateWatch(fc.ctx, config)
+	response, err := fc.client.CreateWatch(fc.ctx, config)
+	glog.Infof("Received CreateWatch response: %#v", response)
 	if err != nil {
 		return err
 	}
@@ -160,6 +163,8 @@ func addFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 }
 
 func removeFimdWatcher(hostURL string, config *pb.FimdConfig) error {
+	glog.Infof("Sending DestroyWatch call to FimD daemon, host: %s, request: %#v", hostURL, config)
+
 	fc := connectToFimdClient(hostURL)
 	defer fc.conn.Close()
 	defer fc.cancel()
