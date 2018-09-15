@@ -1,5 +1,11 @@
 # fim-controller
 
+## Prerequisites
+
+- go v1.11+
+- gRPC
+- Protobuf
+
 ## Cloning Repository
 
 ```
@@ -13,9 +19,12 @@ git clone git@github.com/clustergarage/fim-controller
 # enable Go module support
 export GO111MODULE=on
 
-# NOTE: code-generator needs to be in a vendor/ folder still until
-# Kubernetes updates to Go v1.11 for modules support
-#
+# download required go modules
+go mod download
+
+# NOTE: code-generator needs to be in the `vendor` folder until
+#       Kubernetes updates to Go v1.11 for modules support
+
 # build kube-controller definitions
 ./bin/update-codegen.sh
 
@@ -29,5 +38,6 @@ go mod tidy
 ## Running Locally
 
 ```
-./bin/fim-controller -kubeconfig $HOME/.kube/config -log_dir ./log
+# connect to locally-running FimD daemon
+./bin/fim-controller -kubeconfig $HOME/.kube/config -fimd 0.0.0.0:50051
 ```
