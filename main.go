@@ -39,10 +39,10 @@ func getKubernetesClient() (kubernetes.Interface, clientset.Interface) {
 }
 
 func main() {
-	// Override --alsologtostderr default value.
-	if alsoLogToStderr := flag.Lookup("alsologtostderr"); alsoLogToStderr != nil {
-		alsoLogToStderr.DefValue = "true"
-		alsoLogToStderr.Value.Set("true")
+	// Override --stderrthreshold default value.
+	if stderrThreshold := flag.Lookup("stderrthreshold"); stderrThreshold != nil {
+		stderrThreshold.DefValue = "INFO"
+		stderrThreshold.Value.Set("INFO")
 	}
 	flag.Parse()
 	defer glog.Flush()
@@ -54,11 +54,11 @@ func main() {
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(kubeclientset, time.Second*30)
 	fimInformerFactory := informers.NewSharedInformerFactory(fimclientset, time.Second*30)
 
-	controller := fimcontroller.NewFimWatcherController(kubeclientset, fimclientset,
+	controller := fimcontroller.NewFimWatcherController(fimdURL,
+		kubeclientset, fimclientset,
 		fimInformerFactory.Fimcontroller().V1alpha1().FimWatchers(),
 		kubeInformerFactory.Core().V1().Pods(),
-		kubeInformerFactory.Core().V1().Services(),
-		fimdURL)
+		kubeInformerFactory.Core().V1().Services())
 
 	go kubeInformerFactory.Start(stopCh)
 	go fimInformerFactory.Start(stopCh)

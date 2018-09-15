@@ -7,6 +7,6 @@ RUN go mod download && \
 
 FROM scratch
 COPY --from=builder /go/src/clustergarage.io/fim-controller/fimcontroller /
-# glog seems to require /tmp to exist for writing logs by default
+# glog requires /tmp to exist as log_dir is /tmp by default
 COPY --from=builder /tmp /tmp
 CMD ["/fimcontroller"]

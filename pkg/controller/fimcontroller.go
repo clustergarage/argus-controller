@@ -101,9 +101,10 @@ type FimWatcherController struct {
 }
 
 // NewFimWatcherController returns a new fim watch controller
-func NewFimWatcherController(kubeclientset kubernetes.Interface, fimclientset clientset.Interface,
+func NewFimWatcherController(fimd string, kubeclientset kubernetes.Interface, fimclientset clientset.Interface,
 	fwInformer informers.FimWatcherInformer, podInformer coreinformers.PodInformer,
-	svcInformer coreinformers.ServiceInformer, fimdURL string) *FimWatcherController {
+	svcInformer coreinformers.ServiceInformer) *FimWatcherController {
+	fimdURL = fimd
 
 	// Create event broadcaster
 	// Add fimcontroller types to the default Kubernetes Scheme so Events can be
