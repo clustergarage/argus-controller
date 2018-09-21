@@ -2,6 +2,8 @@ package fimcontroller
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"time"
 
 	"github.com/golang/glog"
@@ -150,7 +152,7 @@ func addFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 	defer fc.cancel()
 
 	if fc.client == nil {
-		return errorsapi.NewConflict(schema.GroupResource{Resource: "hosts"},
+		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
 			hostURL, errors.New("could not connect to fimd client"))
 	}
 
@@ -170,7 +172,7 @@ func removeFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 	defer fc.cancel()
 
 	if fc.client == nil {
-		return errorsapi.NewConflict(schema.GroupResource{Resource: "hosts"},
+		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
 			hostURL, errors.New("could not connect to fimd client"))
 	}
 
@@ -179,4 +181,33 @@ func removeFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 		return err
 	}
 	return nil
+}
+
+func getWatchState(hostURL string) ([]*pb.FimdHandle, error) {
+	fc := connectToFimdClient(hostURL)
+	defer fc.conn.Close()
+	defer fc.cancel()
+
+	if fc.client == nil {
+		return nil, errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
+			hostURL, errors.New("could not connect to fimd client"))
+	}
+
+	var watchers []*pb.FimdHandle
+	stream, err := fc.client.GetWatchState(fc.ctx, &pb.Empty{})
+	if err != nil {
+		return nil, err
+	}
+	for {
+		watch, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			break
+		}
+		fmt.Println(watch)
+		watchers = append(watchers, watch)
+	}
+	return watchers, nil
 }

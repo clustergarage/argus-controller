@@ -3,7 +3,7 @@ module clustergarage.io/fim-controller
 require (
 	github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973 // indirect
 	github.com/boltdb/bolt v1.3.1 // indirect
-	github.com/clustergarage/fim-proto v0.0.0-20180914001640-0f2e172ab9dc
+	github.com/clustergarage/fim-proto v0.0.0-20180921144330-3717c2f334aa
 	github.com/coreos/bbolt v1.3.0 // indirect
 	github.com/coreos/etcd v3.3.9+incompatible // indirect
 	github.com/coreos/go-semver v0.2.0 // indirect
@@ -53,7 +53,7 @@ require (
 	golang.org/x/crypto v0.0.0-20180222182404-49796115aa4b // indirect
 	golang.org/x/net v0.0.0-20180906233101-161cd47e91fd
 	golang.org/x/time v0.0.0-20161028155119-f51c12702a4d // indirect
-	golang.org/x/tools v0.0.0-20180911133044-677d2ff680c1 // indirect
+	golang.org/x/tools v0.0.0-20180917221912-90fa682c2a6e // indirect
 	google.golang.org/genproto v0.0.0-20180627194029-ff3583edef7d // indirect
 	google.golang.org/grpc v0.0.0-20180702170826-d35d006431ef
 	gopkg.in/airbrake/gobrake.v2 v2.0.9 // indirect
