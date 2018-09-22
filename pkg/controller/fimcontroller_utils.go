@@ -2,11 +2,11 @@ package fimcontroller
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"time"
 
 	"github.com/golang/glog"
+	"github.com/processout/grpc-go-pool"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
@@ -25,11 +25,18 @@ import (
 )
 
 type FimdConnection struct {
-	client pb.FimdClient
-	conn   *grpc.ClientConn
-	ctx    context.Context
-	cancel context.CancelFunc
+	hostURL string
+	pool    *grpcpool.Pool
 }
+
+var (
+	fcInitialConnections = 10
+	fcMaximumConnections = 50
+	fcIdleTimeout        = 10 * time.Second
+	fcMaxLifeDuration    = time.Minute
+
+	fimdConnections []*FimdConnection
+)
 
 type updatePodFunc func(pod *corev1.Pod) error
 
@@ -130,33 +137,66 @@ func getPodContainerIDs(pod *corev1.Pod) []string {
 	return cids
 }
 
-func connectToFimdClient(hostURL string) FimdConnection {
-	var fc FimdConnection
-	var err error
-
-	fc.conn, err = grpc.Dial(hostURL, grpc.WithInsecure())
-	if err != nil {
-		return fc
+func getFimdConnection(hostURL string) (int, *FimdConnection, error) {
+	for i, fc := range fimdConnections {
+		if fc.hostURL == hostURL {
+			return i, fc, nil
+		}
 	}
-	// @TODO: re-evaluate this timeout
-	fc.ctx, fc.cancel = context.WithTimeout(context.Background(), 2*time.Second)
-	fc.client = pb.NewFimdClient(fc.conn)
-	return fc
+	return -1, nil, errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
+		hostURL, errors.New("could not find fimd connection by hostURL"))
+}
+
+func initFimdConnection(hostURL string) error {
+	pool, err := grpcpool.New(func() (*grpc.ClientConn, error) {
+		conn, err := grpc.Dial(hostURL, grpc.WithInsecure())
+		if err != nil {
+			return nil, err
+		}
+		return conn, err
+	}, fcInitialConnections, fcMaximumConnections, fcIdleTimeout, fcMaxLifeDuration)
+	if err != nil {
+		return err
+	}
+
+	// store in host connection pool array
+	fimdConnections = append(fimdConnections, &FimdConnection{
+		hostURL: hostURL,
+		pool:    pool,
+	})
+	return nil
+}
+
+func destroyFimdConnection(hostURL string) error {
+	index, fc, err := getFimdConnection(hostURL)
+	if err != nil {
+		return err
+	}
+	fc.pool.Close()
+
+	// remove from host connection pool array
+	fimdConnections = append(fimdConnections[:index], fimdConnections[index+1:]...)
+	return nil
 }
 
 func addFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 	glog.Infof("Sending CreateWatch call to FimD daemon, host: %s, request: %#v)", hostURL, config)
 
-	fc := connectToFimdClient(hostURL)
-	defer fc.conn.Close()
-	defer fc.cancel()
-
-	if fc.client == nil {
-		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
-			hostURL, errors.New("could not connect to fimd client"))
+	_, fc, err := getFimdConnection(hostURL)
+	if err != nil {
+		return err
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	defer ctx.Done()
 
-	response, err := fc.client.CreateWatch(fc.ctx, config)
+	conn, err := fc.pool.Get(ctx)
+	if err != nil {
+		return err
+	}
+	client := pb.NewFimdClient(conn.ClientConn)
+
+	response, err := client.CreateWatch(ctx, config)
 	glog.Infof("Received CreateWatch response: %#v", response)
 	if err != nil {
 		return err
@@ -167,16 +207,21 @@ func addFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 func removeFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 	glog.Infof("Sending DestroyWatch call to FimD daemon, host: %s, request: %#v", hostURL, config)
 
-	fc := connectToFimdClient(hostURL)
-	defer fc.conn.Close()
-	defer fc.cancel()
-
-	if fc.client == nil {
-		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
-			hostURL, errors.New("could not connect to fimd client"))
+	_, fc, err := getFimdConnection(hostURL)
+	if err != nil {
+		return err
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	defer ctx.Done()
 
-	_, err := fc.client.DestroyWatch(fc.ctx, config)
+	conn, err := fc.pool.Get(ctx)
+	if err != nil {
+		return err
+	}
+	client := pb.NewFimdClient(conn.ClientConn)
+
+	_, err = client.DestroyWatch(ctx, config)
 	if err != nil {
 		return err
 	}
@@ -184,17 +229,22 @@ func removeFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 }
 
 func getWatchState(hostURL string) ([]*pb.FimdHandle, error) {
-	fc := connectToFimdClient(hostURL)
-	defer fc.conn.Close()
-	defer fc.cancel()
-
-	if fc.client == nil {
-		return nil, errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
-			hostURL, errors.New("could not connect to fimd client"))
+	_, fc, err := getFimdConnection(hostURL)
+	if err != nil {
+		return nil, err
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	defer ctx.Done()
+
+	conn, err := fc.pool.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	client := pb.NewFimdClient(conn.ClientConn)
 
 	var watchers []*pb.FimdHandle
-	stream, err := fc.client.GetWatchState(fc.ctx, &pb.Empty{})
+	stream, err := client.GetWatchState(ctx, &pb.Empty{})
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +256,6 @@ func getWatchState(hostURL string) ([]*pb.FimdHandle, error) {
 		if err != nil {
 			break
 		}
-		fmt.Println(watch)
 		watchers = append(watchers, watch)
 	}
 	return watchers, nil

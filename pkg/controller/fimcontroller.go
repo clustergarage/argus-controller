@@ -214,6 +214,11 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 
 	// @TODO: document this
 	if label, _ := pod.GetLabels()["daemon"]; label == "fimd" {
+		// start grpc pool for connections to grpc server on daemon
+		if err := initFimdConnection(fwc.getHostURL(pod)); err != nil {
+			return
+		}
+
 		allPods, err := fwc.podLister.List(labels.Everything())
 		if err != nil {
 			return
@@ -317,6 +322,11 @@ func (fwc *FimWatcherController) deletePod(obj interface{}) {
 
 	// @TODO: document this
 	if label, _ := pod.GetLabels()["daemon"]; label == "fimd" {
+		// start grpc pool for connections to grpc server on daemon
+		if err := destroyFimdConnection(fwc.getHostURL(pod)); err != nil {
+			return
+		}
+
 		allPods, err := fwc.podLister.List(labels.Everything())
 		if err != nil {
 			return
@@ -726,11 +736,14 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 	fwc.recorder.Eventf(fw, corev1.EventTypeNormal, SuccessAdded, MessageResourceAdded, nodeName)
 }
 
-func (fwc *FimWatcherController) getHostURLFromSiblingPod(pod *corev1.Pod) (string, error) {
+func (fwc *FimWatcherController) getHostURL(pod *corev1.Pod) string {
 	if fimdURL != "" {
-		return fimdURL, nil
+		return fimdURL
 	}
+	return fmt.Sprintf("%s:%d", pod.Status.PodIP, fimdPort)
+}
 
+func (fwc *FimWatcherController) getHostURLFromSiblingPod(pod *corev1.Pod) (string, error) {
 	selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
 		MatchLabels: map[string]string{"daemon": "fimd"},
 	})
@@ -744,7 +757,7 @@ func (fwc *FimWatcherController) getHostURLFromSiblingPod(pod *corev1.Pod) (stri
 	}
 	for _, daemonPod := range daemonPods {
 		if daemonPod.Spec.NodeName == pod.Spec.NodeName {
-			return fmt.Sprintf("%s:%d", daemonPod.Status.PodIP, fimdPort), nil
+			return fwc.getHostURL(daemonPod), nil
 		}
 	}
 
