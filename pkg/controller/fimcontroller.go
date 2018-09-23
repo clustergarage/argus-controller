@@ -533,7 +533,6 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 	// get the diff between all pods and selected pods
 	var rmPods []*corev1.Pod
 	var addPods []*corev1.Pod
-	var watchStates [][]*pb.FimdHandle
 
 	selector, err := metav1.LabelSelectorAsSelector(fw.Spec.Selector)
 	if err != nil {
@@ -551,36 +550,8 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 		return err
 	}
 
-	// split into shared fn
-	selector, err = metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
-		MatchLabels: map[string]string{"daemon": "fimd"},
-	})
-	if err != nil {
-		return err
-	}
-	daemonPods, err := fwc.podLister.Pods(fimNamespace).List(selector)
-	if err != nil {
-		return err
-	}
-	for _, pod := range daemonPods {
-		ws, err := getWatchState(fwc.getHostURL(pod))
-		if err != nil {
-			continue
-		}
-		watchStates = append(watchStates, ws)
-	}
-
 	for _, pod := range selectedPods {
-		var wsFound bool
-		// move to shared fn
-		for _, watchState := range watchStates {
-			for _, ws := range watchState {
-				if pod.Name == ws.PodName {
-					wsFound = true
-					break
-				}
-			}
-		}
+		wsFound := fwc.isPodInWatchState(pod)
 
 		if pod.DeletionTimestamp == nil && !wsFound {
 			var found bool
@@ -599,17 +570,7 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 	}
 
 	for _, pod := range allPods {
-		var wsFound bool
-		// move to shared fn
-		for _, watchState := range watchStates {
-			for _, ws := range watchState {
-				if pod.Name == ws.PodName {
-					wsFound = true
-					break
-				}
-			}
-		}
-		if !wsFound {
+		if wsFound := fwc.isPodInWatchState(pod); !wsFound {
 			continue
 		}
 
@@ -776,13 +737,7 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 			})
 	}
 
-	// @TODO: document this; split into separate fn?
-	for index, podName := range updatePodQueue {
-		if pod.Name == podName {
-			updatePodQueue = append(updatePodQueue[:index], updatePodQueue[index+1:]...)
-			break
-		}
-	}
+	fwc.removePodFromUpdateQueue(pod.Name)
 
 	fwc.recorder.Eventf(fw, corev1.EventTypeNormal, SuccessAdded, MessageResourceAdded, nodeName)
 }
@@ -833,4 +788,53 @@ func (fwc *FimWatcherController) getFimWatcherSubjects(fw *fimv1alpha1.FimWatche
 		})
 	}
 	return subjects
+}
+
+func (fwc *FimWatcherController) getWatchStates() ([][]*pb.FimdHandle, error) {
+	var watchStates [][]*pb.FimdHandle
+	selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
+		MatchLabels: map[string]string{"daemon": "fimd"},
+	})
+	if err != nil {
+		return nil, err
+	}
+	daemonPods, err := fwc.podLister.Pods(fimNamespace).List(selector)
+	if err != nil {
+		return nil, err
+	}
+	for _, pod := range daemonPods {
+		ws, err := getWatchState(fwc.getHostURL(pod))
+		if err != nil {
+			continue
+		}
+		watchStates = append(watchStates, ws)
+	}
+	return watchStates, nil
+}
+
+func (fwc *FimWatcherController) isPodInWatchState(pod *corev1.Pod) bool {
+	watchStates, err := fwc.getWatchStates()
+	if err != nil {
+		return false
+	}
+
+	var found bool
+	for _, watchState := range watchStates {
+		for _, ws := range watchState {
+			if pod.Name == ws.PodName {
+				found = true
+				break
+			}
+		}
+	}
+	return found
+}
+
+func (fwc *FimWatcherController) removePodFromUpdateQueue(podName string) {
+	for index, p := range updatePodQueue {
+		if podName == p {
+			updatePodQueue = append(updatePodQueue[:index], updatePodQueue[index+1:]...)
+			break
+		}
+	}
 }
