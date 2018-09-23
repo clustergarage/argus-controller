@@ -53,8 +53,13 @@ const (
 	MessageResourceRemoved = "Removed FimD watcher on %v"
 )
 
-// FimD server to connect to if daemon is out-of-cluster.
-var fimdURL string
+var (
+	// FimD server to connect to if daemon is out-of-cluster.
+	fimdURL string
+
+	// @TODO: document this
+	updatePodQueue []string
+)
 
 // FimWatcherController is the controller implementation for FimWatcher resources
 type FimWatcherController struct {
@@ -479,6 +484,8 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 			return err
 		}
 		podsToUpdate = append(podsToUpdate, pod)
+		// @TODO: document this
+		updatePodQueue = append(updatePodQueue, pod.Name)
 	}
 
 	for _, pod := range podsToUpdate {
@@ -576,8 +583,18 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 		}
 
 		if pod.DeletionTimestamp == nil && !wsFound {
-			addPods = append(addPods, pod)
-			continue
+			var found bool
+			for _, p := range updatePodQueue {
+				// check if pod is already in updatePodQueue
+				if pod.Name == p {
+					found = true
+					break
+				}
+			}
+			if !found {
+				addPods = append(addPods, pod)
+				continue
+			}
 		}
 	}
 
@@ -757,6 +774,14 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 				po.Annotations = pod.Annotations
 				return nil
 			})
+	}
+
+	// @TODO: document this; split into separate fn?
+	for index, podName := range updatePodQueue {
+		if pod.Name == podName {
+			updatePodQueue = append(updatePodQueue[:index], updatePodQueue[index+1:]...)
+			break
+		}
 	}
 
 	fwc.recorder.Eventf(fw, corev1.EventTypeNormal, SuccessAdded, MessageResourceAdded, nodeName)
