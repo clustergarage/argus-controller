@@ -33,7 +33,7 @@ var (
 	fcInitialConnections = 10
 	fcMaximumConnections = 50
 	fcIdleTimeout        = 10 * time.Second
-	fcMaxLifeDuration    = time.Minute
+	fcMaxLifeDuration    = 5 * time.Minute
 
 	fimdConnections []*FimdConnection
 )
@@ -195,6 +195,7 @@ func addFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 		return err
 	}
 	client := pb.NewFimdClient(conn.ClientConn)
+	defer conn.Close()
 
 	response, err := client.CreateWatch(ctx, config)
 	glog.Infof("Received CreateWatch response: %#v", response)
@@ -220,6 +221,7 @@ func removeFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 		return err
 	}
 	client := pb.NewFimdClient(conn.ClientConn)
+	defer conn.Close()
 
 	_, err = client.DestroyWatch(ctx, config)
 	if err != nil {
@@ -242,6 +244,7 @@ func getWatchState(hostURL string) ([]*pb.FimdHandle, error) {
 		return nil, err
 	}
 	client := pb.NewFimdClient(conn.ClientConn)
+	defer conn.Close()
 
 	var watchers []*pb.FimdHandle
 	stream, err := client.GetWatchState(ctx, &pb.Empty{})

@@ -24,7 +24,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
-	//podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/controller"
 
 	fimv1alpha1 "clustergarage.io/fim-controller/pkg/apis/fimcontroller/v1alpha1"
@@ -50,11 +49,8 @@ const (
 	// MessageResourceSynced is the message used for an Event fired when a FimWatcher
 	// is synced successfully
 	MessageResourceSynced  = "FimWatcher synced successfully"
-	MessageResourceAdded   = "Added fimd watcher on %v"
-	MessageResourceRemoved = "Removed fimd watcher on %v"
-
-	// The number of times we retry updating a FimWatcher's status
-	statusUpdateRetries = 1
+	MessageResourceAdded   = "Added FimD watcher on %v"
+	MessageResourceRemoved = "Removed FimD watcher on %v"
 )
 
 // FimD server to connect to if daemon is out-of-cluster.
@@ -232,7 +228,7 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 				continue
 			}
 
-			updateAnnotations([]string{FimWatcherAnnotationKey}, nil, po)
+			//updateAnnotations([]string{FimWatcherAnnotationKey}, nil, po)
 			glog.V(4).Infof("Unannotated pod %s found: %#v.", po.Name, po)
 			for _, fw := range fws {
 				fwc.enqueueFimWatcher(fw)
@@ -526,63 +522,94 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 	}
 
 	fwNeedsSync := fwc.expectations.SatisfiedExpectations(key)
+
+	// get the diff between all pods and selected pods
+	var rmPods []*corev1.Pod
+	var addPods []*corev1.Pod
+	var watchStates [][]*pb.FimdHandle
+
 	selector, err := metav1.LabelSelectorAsSelector(fw.Spec.Selector)
 	if err != nil {
 		runtime.HandleError(fmt.Errorf("Error converting pod selector to selector: %v", err))
 		return nil
 	}
-
 	selectedPods, err := fwc.podLister.Pods(fw.Namespace).List(selector)
 	if err != nil {
 		return err
 	}
 
-	// get the diff between all pods and selected pods
-	var rmPods []*corev1.Pod
-	var addPods []*corev1.Pod
+	// @TODO: only get pods with annotation: pod.GetAnnotations()[FimWatcherAnnotationKey]
+	allPods, err := fwc.podLister.Pods(fw.Namespace).List(labels.Everything())
+	if err != nil {
+		return err
+	}
+
+	// split into shared fn
+	selector, err = metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
+		MatchLabels: map[string]string{"daemon": "fimd"},
+	})
+	if err != nil {
+		return err
+	}
+	daemonPods, err := fwc.podLister.Pods(fimNamespace).List(selector)
+	if err != nil {
+		return err
+	}
+	for _, pod := range daemonPods {
+		ws, err := getWatchState(fwc.getHostURL(pod))
+		if err != nil {
+			continue
+		}
+		watchStates = append(watchStates, ws)
+	}
 
 	for _, pod := range selectedPods {
-		hostURL, err := fwc.getHostURLFromSiblingPod(pod)
-		if err != nil || hostURL == "" {
-			return err
-		}
-		watchState, err := getWatchState(hostURL)
-
-		var found bool
-		for _, w := range watchState {
-			if pod.Name == w.PodName {
-				found = true
-				break
+		var wsFound bool
+		// move to shared fn
+		for _, watchState := range watchStates {
+			for _, ws := range watchState {
+				if pod.Name == ws.PodName {
+					wsFound = true
+					break
+				}
 			}
 		}
 
-		// if pod is currently being destroyed
-		// or no longer found in selected pods
-		if pod.DeletionTimestamp != nil || !found {
+		if pod.DeletionTimestamp == nil && !wsFound {
 			addPods = append(addPods, pod)
 			continue
 		}
 	}
 
-	allPods, err := fwc.podLister.Pods(fw.Namespace).List(labels.Everything())
-	if err != nil {
-		return err
-	}
 	for _, pod := range allPods {
-		for _, po := range selectedPods {
-			if pod == po {
-				continue
+		var wsFound bool
+		// move to shared fn
+		for _, watchState := range watchStates {
+			for _, ws := range watchState {
+				if pod.Name == ws.PodName {
+					wsFound = true
+					break
+				}
 			}
-			// if pod is still annotated with observable key
-			if value, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found && value == fw.Name {
-				rmPods = append(rmPods, pod)
+		}
+		if !wsFound {
+			continue
+		}
+
+		var selFound bool
+		for _, po := range selectedPods {
+			if pod.Name == po.Name {
+				selFound = true
 				break
 			}
 		}
-
+		if pod.DeletionTimestamp != nil || !selFound {
+			if value, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found && value == fw.Name {
+				rmPods = append(rmPods, pod)
+				continue
+			}
+		}
 	}
-
-	fmt.Println(" ][ add:", len(addPods), ", rm:", len(rmPods), "][")
 
 	var manageSubjectsErr error
 	if fwNeedsSync &&
@@ -608,7 +635,6 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 	}
 
 	//fwc.recorder.Event(fw, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
-
 	return manageSubjectsErr
 }
 
@@ -744,6 +770,10 @@ func (fwc *FimWatcherController) getHostURL(pod *corev1.Pod) string {
 }
 
 func (fwc *FimWatcherController) getHostURLFromSiblingPod(pod *corev1.Pod) (string, error) {
+	if fimdURL != "" {
+		return fimdURL, nil
+	}
+
 	selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
 		MatchLabels: map[string]string{"daemon": "fimd"},
 	})
