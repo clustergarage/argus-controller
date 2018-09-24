@@ -1,7 +1,7 @@
 package fimcontroller
 
 import (
-	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -10,10 +10,8 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
-	errorsapi "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	errorsutil "k8s.io/apimachinery/pkg/util/errors"
 	coreclient "k8s.io/client-go/kubernetes/typed/core/v1"
 	corelisters "k8s.io/client-go/listers/core/v1"
@@ -24,6 +22,7 @@ import (
 	pb "github.com/clustergarage/fim-proto/golang"
 )
 
+// FimdConnection maps a hostURL with a grpcpool
 type FimdConnection struct {
 	hostURL string
 	pool    *grpcpool.Pool
@@ -137,14 +136,13 @@ func getPodContainerIDs(pod *corev1.Pod) []string {
 	return cids
 }
 
-func getFimdConnection(hostURL string) (int, *FimdConnection, error) {
+func getFimdConnection(hostURL string) (*FimdConnection, int, error) {
 	for i, fc := range fimdConnections {
 		if fc.hostURL == hostURL {
-			return i, fc, nil
+			return fc, i, nil
 		}
 	}
-	return -1, nil, errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
-		hostURL, errors.New("could not find fimd connection by hostURL"))
+	return nil, -1, fmt.Errorf("could not connect to fimd at hostURL %v", hostURL)
 }
 
 func initFimdConnection(hostURL string) error {
@@ -168,7 +166,7 @@ func initFimdConnection(hostURL string) error {
 }
 
 func destroyFimdConnection(hostURL string) error {
-	index, fc, err := getFimdConnection(hostURL)
+	fc, index, err := getFimdConnection(hostURL)
 	if err != nil {
 		return err
 	}
@@ -182,7 +180,7 @@ func destroyFimdConnection(hostURL string) error {
 func addFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 	glog.Infof("Sending CreateWatch call to FimD daemon, host: %s, request: %#v)", hostURL, config)
 
-	_, fc, err := getFimdConnection(hostURL)
+	fc, _, err := getFimdConnection(hostURL)
 	if err != nil {
 		return err
 	}
@@ -197,10 +195,14 @@ func addFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 	client := pb.NewFimdClient(conn.ClientConn)
 	defer conn.Close()
 
-	response, err := client.CreateWatch(ctx, config)
+	var response *pb.FimdHandle
+	response, err = client.CreateWatch(ctx, config)
 	glog.Infof("Received CreateWatch response: %#v", response)
 	if err != nil {
 		return err
+	}
+	if response.NodeName == "" {
+		return fmt.Errorf("got empty response from fimd CreateWatch at %v", hostURL)
 	}
 	return nil
 }
@@ -208,7 +210,7 @@ func addFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 func removeFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 	glog.Infof("Sending DestroyWatch call to FimD daemon, host: %s, request: %#v", hostURL, config)
 
-	_, fc, err := getFimdConnection(hostURL)
+	fc, _, err := getFimdConnection(hostURL)
 	if err != nil {
 		return err
 	}
@@ -231,7 +233,7 @@ func removeFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 }
 
 func getWatchState(hostURL string) ([]*pb.FimdHandle, error) {
-	_, fc, err := getFimdConnection(hostURL)
+	fc, _, err := getFimdConnection(hostURL)
 	if err != nil {
 		return nil, err
 	}

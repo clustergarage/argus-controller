@@ -52,6 +52,7 @@ require (
 	github.com/ugorji/go/codec v0.0.0-20180831062425-e253f1f20942 // indirect
 	github.com/xiang90/probing v0.0.0-20160813154853-07dd2e8dfe18 // indirect
 	golang.org/x/crypto v0.0.0-20180222182404-49796115aa4b // indirect
+	golang.org/x/lint v0.0.0-20180702182130-06c8688daad7 // indirect
 	golang.org/x/net v0.0.0-20180906233101-161cd47e91fd
 	golang.org/x/time v0.0.0-20161028155119-f51c12702a4d // indirect
 	golang.org/x/tools v0.0.0-20180917221912-90fa682c2a6e // indirect

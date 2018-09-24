@@ -1,7 +1,6 @@
 package fimcontroller
 
 import (
-	"errors"
 	"fmt"
 	"reflect"
 	"time"
@@ -39,17 +38,23 @@ const (
 	fimNamespace           = "fim"
 	fimdPort               = 50051
 
-	FimAnnotationKeyPrefix  = "clustergarage.io/"
-	FimWatcherAnnotationKey = FimAnnotationKeyPrefix + "fim-watcher"
+	// FimWatcherAnnotationKey value to annotate a pod being watched by a FimD daemon
+	FimWatcherAnnotationKey = "clustergarage.io/fim-watcher"
 
 	// SuccessSynced is used as part of the Event 'reason' when a FimWatcher is synced
-	SuccessSynced  = "Synced"
-	SuccessAdded   = "Added"
+	SuccessSynced = "Synced"
+	// SuccessAdded is used as part of the Event 'reason' when a FimWatcher is synced
+	SuccessAdded = "Added"
+	// SuccessRemoved is used as part of the Event 'reason' when a FimWatcher is synced
 	SuccessRemoved = "Removed"
 	// MessageResourceSynced is the message used for an Event fired when a FimWatcher
 	// is synced successfully
-	MessageResourceSynced  = "FimWatcher synced successfully"
-	MessageResourceAdded   = "Added FimD watcher on %v"
+	MessageResourceSynced = "FimWatcher synced successfully"
+	// MessageResourceAdded is the message used for an Event fired when a FimWatcher
+	// is synced added
+	MessageResourceAdded = "Added FimD watcher on %v"
+	// MessageResourceRemoved is the message used for an Event fired when a FimWatcher
+	// is synced removed
 	MessageResourceRemoved = "Removed FimD watcher on %v"
 )
 
@@ -102,7 +107,6 @@ type FimWatcherController struct {
 // NewFimWatcherController returns a new fim watch controller
 func NewFimWatcherController(fimd string, kubeclientset kubernetes.Interface, fimclientset clientset.Interface,
 	fwInformer informers.FimWatcherInformer, podInformer coreinformers.PodInformer) *FimWatcherController {
-	fimdURL = fimd
 
 	// Create event broadcaster
 	// Add fimcontroller types to the default Kubernetes Scheme so Events can be
@@ -144,6 +148,17 @@ func NewFimWatcherController(fimd string, kubeclientset kubernetes.Interface, fi
 		UpdateFunc: fwc.updatePod,
 		DeleteFunc: fwc.deletePod,
 	})
+
+	fimdURL = fimd
+	if fimdURL != "" {
+		hostURL, err := fwc.getHostURL(nil)
+		if err != nil {
+			return nil
+		}
+		if err := initFimdConnection(hostURL); err != nil {
+			return nil
+		}
+	}
 
 	return fwc
 }
@@ -215,8 +230,32 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 
 	// @TODO: document this
 	if label, _ := pod.GetLabels()["daemon"]; label == "fimd" {
-		// start grpc pool for connections to grpc server on daemon
-		if err := initFimdConnection(fwc.getHostURL(pod)); err != nil {
+		var hostURL string
+
+		// @TODO: document this
+		if retryErr := retry.RetryOnConflict(wait.Backoff{
+			// @TODO: re-evaluate these values
+			Steps:    10,
+			Duration: 1 * time.Second,
+			Factor:   2.0,
+			Jitter:   0.1,
+		}, func() error {
+			var po *corev1.Pod
+			var err error
+			po, err = fwc.podLister.Pods(fimNamespace).Get(pod.Name)
+			if err != nil {
+				return err
+			}
+			hostURL, err = fwc.getHostURL(po)
+			if err != nil {
+				return err
+			}
+			// start grpc pool for connections to grpc server on daemon
+			if err = initFimdConnection(hostURL); err != nil {
+				return err
+			}
+			return err
+		}); retryErr != nil {
 			return
 		}
 
@@ -324,7 +363,11 @@ func (fwc *FimWatcherController) deletePod(obj interface{}) {
 	// @TODO: document this
 	if label, _ := pod.GetLabels()["daemon"]; label == "fimd" {
 		// start grpc pool for connections to grpc server on daemon
-		if err := destroyFimdConnection(fwc.getHostURL(pod)); err != nil {
+		hostURL, err := fwc.getHostURL(pod)
+		if err != nil {
+			return
+		}
+		if err := destroyFimdConnection(hostURL); err != nil {
 			return
 		}
 
@@ -619,7 +662,7 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 // getPodFimWatchers returns a list of FimWatchers matching the given pod
 func (fwc *FimWatcherController) getPodFimWatchers(pod *corev1.Pod) []*fimv1alpha1.FimWatcher {
 	if len(pod.Labels) == 0 {
-		fmt.Errorf("no FimWatchers found for pod %v because it has no labels", pod.Name)
+		runtime.HandleError(fmt.Errorf("no FimWatchers found for pod %v because it has no labels", pod.Name))
 		return nil
 	}
 
@@ -635,7 +678,7 @@ func (fwc *FimWatcherController) getPodFimWatchers(pod *corev1.Pod) []*fimv1alph
 		}
 		selector, err := metav1.LabelSelectorAsSelector(fw.Spec.Selector)
 		if err != nil {
-			fmt.Errorf("invalid selector: %v", err)
+			runtime.HandleError(fmt.Errorf("invalid selector: %v", err))
 			return nil
 		}
 
@@ -647,7 +690,7 @@ func (fwc *FimWatcherController) getPodFimWatchers(pod *corev1.Pod) []*fimv1alph
 	}
 
 	if len(fws) == 0 {
-		fmt.Errorf("could not find FimWatcher for pod %s in namespace %s with labels: %v", pod.Name, pod.Namespace, pod.Labels)
+		runtime.HandleError(fmt.Errorf("could not find FimWatcher for pod %s in namespace %s with labels: %v", pod.Name, pod.Namespace, pod.Labels))
 		return nil
 	}
 	if len(fws) > 1 {
@@ -681,37 +724,28 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 		}
 
 		if po.Spec.NodeName == "" || po.Status.HostIP == "" {
-			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
-				po.Name, errors.New("host name/ip not available"))
-			return err
+			return fmt.Errorf("pod %v hostname/ip not available", po.Name)
 		}
 
 		for _, ctr := range po.Status.ContainerStatuses {
 			if ctr.ContainerID == "" {
-				err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
-					po.Name, errors.New("pod container id not available"))
-				return err
+				return fmt.Errorf("pod %v containerid not available", po.Name)
 			}
 			cids = append(cids, ctr.ContainerID)
 		}
 		if len(po.Spec.Containers) != len(cids) {
-			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
-				po.Name, errors.New("available pod container count does not match ready"))
-			return err
+			return fmt.Errorf("pod %v available pod container count does not match ready", po.Name)
 		}
 
 		nodeName = po.Spec.NodeName
 		if nodeName == "" {
-			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
-				po.Name, errors.New("pod node name is not available"))
-			return err
+			return fmt.Errorf("pod %v node name is not available", po.Name)
 		}
 
 		var hostErr error
 		hostURL, hostErr = fwc.getHostURLFromSiblingPod(po)
 		if hostErr != nil || hostURL == "" {
-			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
-				po.Name, errors.New("pod host is not available"))
+			return fmt.Errorf("pod %v host is not available", po.Name)
 		}
 		return err
 	}); retryErr != nil {
@@ -719,7 +753,13 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 	}
 
 	// @TODO: document this
-	if retryErr := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+	if retryErr := retry.RetryOnConflict(wait.Backoff{
+		// @TODO: re-evaluate these values
+		Steps:    10,
+		Duration: 1 * time.Second,
+		Factor:   2.0,
+		Jitter:   0.1,
+	}, func() error {
 		var err error
 		err = addFimdWatcher(hostURL, &pb.FimdConfig{
 			NodeName:    nodeName,
@@ -742,11 +782,14 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 	fwc.recorder.Eventf(fw, corev1.EventTypeNormal, SuccessAdded, MessageResourceAdded, nodeName)
 }
 
-func (fwc *FimWatcherController) getHostURL(pod *corev1.Pod) string {
+func (fwc *FimWatcherController) getHostURL(pod *corev1.Pod) (string, error) {
 	if fimdURL != "" {
-		return fimdURL
+		return fimdURL, nil
 	}
-	return fmt.Sprintf("%s:%d", pod.Status.PodIP, fimdPort)
+	if pod.Status.PodIP == "" {
+		return "", fmt.Errorf("cannot locate fimd pod on node %v", pod.Spec.NodeName)
+	}
+	return fmt.Sprintf("%s:%d", pod.Status.PodIP, fimdPort), nil
 }
 
 func (fwc *FimWatcherController) getHostURLFromSiblingPod(pod *corev1.Pod) (string, error) {
@@ -767,12 +810,15 @@ func (fwc *FimWatcherController) getHostURLFromSiblingPod(pod *corev1.Pod) (stri
 	}
 	for _, daemonPod := range daemonPods {
 		if daemonPod.Spec.NodeName == pod.Spec.NodeName {
-			return fwc.getHostURL(daemonPod), nil
+			hostURL, err := fwc.getHostURL(daemonPod)
+			if err != nil {
+				return "", err
+			}
+			return hostURL, nil
 		}
 	}
 
-	return "", errorsutil.NewConflict(schema.GroupResource{Resource: "nodes"},
-		pod.Spec.NodeName, errors.New("cannot find fimd pod on node"))
+	return "", fmt.Errorf("cannot locate fimd pod on node %v", pod.Spec.NodeName)
 }
 
 func (fwc *FimWatcherController) getFimWatcherSubjects(fw *fimv1alpha1.FimWatcher) []*pb.FimWatcherSubject {
@@ -803,7 +849,11 @@ func (fwc *FimWatcherController) getWatchStates() ([][]*pb.FimdHandle, error) {
 		return nil, err
 	}
 	for _, pod := range daemonPods {
-		ws, err := getWatchState(fwc.getHostURL(pod))
+		hostURL, err := fwc.getHostURL(pod)
+		if err != nil {
+			continue
+		}
+		ws, err := getWatchState(hostURL)
 		if err != nil {
 			continue
 		}

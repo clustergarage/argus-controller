@@ -41,3 +41,10 @@ go mod tidy
 # connect to locally-running FimD daemon
 ./bin/fim-controller -kubeconfig $HOME/.kube/config -fimd 0.0.0.0:50051
 ```
+
+## Verifying Code
+
+```
+go vet pkg/controller/fimcontroller.go pkg/controller/fimdcontroller_utils.go
+golint pkg/controller/fimcontroller.go pkg/controller/fimdcontroller_utils.go
+```
