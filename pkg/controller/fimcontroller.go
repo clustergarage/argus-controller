@@ -47,15 +47,15 @@ const (
 	SuccessAdded = "Added"
 	// SuccessRemoved is used as part of the Event 'reason' when a FimWatcher is synced
 	SuccessRemoved = "Removed"
-	// MessageResourceSynced is the message used for an Event fired when a FimWatcher
-	// is synced successfully
-	MessageResourceSynced = "FimWatcher synced successfully"
 	// MessageResourceAdded is the message used for an Event fired when a FimWatcher
 	// is synced added
 	MessageResourceAdded = "Added FimD watcher on %v"
 	// MessageResourceRemoved is the message used for an Event fired when a FimWatcher
 	// is synced removed
 	MessageResourceRemoved = "Removed FimD watcher on %v"
+	// MessageResourceSynced is the message used for an Event fired when a FimWatcher
+	// is synced successfully
+	MessageResourceSynced = "FimWatcher synced successfully"
 )
 
 var (
@@ -593,8 +593,14 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 		return err
 	}
 
+	// sync watch state
+	watchStates, err := fwc.getWatchStates()
+	if err != nil {
+		return err
+	}
+
 	for _, pod := range selectedPods {
-		wsFound := fwc.isPodInWatchState(pod)
+		wsFound := fwc.isPodInWatchState(pod, watchStates)
 
 		if pod.DeletionTimestamp == nil && !wsFound {
 			var found bool
@@ -613,7 +619,7 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 	}
 
 	for _, pod := range allPods {
-		if wsFound := fwc.isPodInWatchState(pod); !wsFound {
+		if wsFound := fwc.isPodInWatchState(pod, watchStates); !wsFound {
 			continue
 		}
 
@@ -662,7 +668,7 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 // getPodFimWatchers returns a list of FimWatchers matching the given pod
 func (fwc *FimWatcherController) getPodFimWatchers(pod *corev1.Pod) []*fimv1alpha1.FimWatcher {
 	if len(pod.Labels) == 0 {
-		runtime.HandleError(fmt.Errorf("no FimWatchers found for pod %v because it has no labels", pod.Name))
+		glog.V(4).Infof("no FimWatchers found for pod %v because it has no labels", pod.Name)
 		return nil
 	}
 
@@ -690,13 +696,13 @@ func (fwc *FimWatcherController) getPodFimWatchers(pod *corev1.Pod) []*fimv1alph
 	}
 
 	if len(fws) == 0 {
-		runtime.HandleError(fmt.Errorf("could not find FimWatcher for pod %s in namespace %s with labels: %v", pod.Name, pod.Namespace, pod.Labels))
+		glog.V(4).Infof("could not find FimWatcher for pod %s in namespace %s with labels: %v", pod.Name, pod.Namespace, pod.Labels)
 		return nil
 	}
 	if len(fws) > 1 {
 		// ControllerRef will ensure we don't do anything crazy, but more than one
 		// item in this list nevertheless constitutes user error.
-		runtime.HandleError(fmt.Errorf("user error! more than one %v is selecting pods with labels: %+v", fwc.Kind, pod.Labels))
+		runtime.HandleError(fmt.Errorf("user error; more than one %v is selecting pods with labels: %+v", fwc.Kind, pod.Labels))
 	}
 	return fws
 }
@@ -838,6 +844,18 @@ func (fwc *FimWatcherController) getFimWatcherSubjects(fw *fimv1alpha1.FimWatche
 
 func (fwc *FimWatcherController) getWatchStates() ([][]*pb.FimdHandle, error) {
 	var watchStates [][]*pb.FimdHandle
+
+	// @TODO: document this
+	if fimdURL != "" {
+		ws, err := getWatchState(fimdURL)
+		if err != nil {
+			return nil, err
+		}
+		watchStates = append(watchStates, ws)
+		return watchStates, nil
+	}
+
+	// @TODO: document this
 	selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
 		MatchLabels: map[string]string{"daemon": "fimd"},
 	})
@@ -862,12 +880,7 @@ func (fwc *FimWatcherController) getWatchStates() ([][]*pb.FimdHandle, error) {
 	return watchStates, nil
 }
 
-func (fwc *FimWatcherController) isPodInWatchState(pod *corev1.Pod) bool {
-	watchStates, err := fwc.getWatchStates()
-	if err != nil {
-		return false
-	}
-
+func (fwc *FimWatcherController) isPodInWatchState(pod *corev1.Pod, watchStates [][]*pb.FimdHandle) bool {
 	var found bool
 	for _, watchState := range watchStates {
 		for _, ws := range watchState {
