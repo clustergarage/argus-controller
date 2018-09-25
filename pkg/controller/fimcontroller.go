@@ -1,6 +1,7 @@
 package fimcontroller
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"time"
@@ -231,7 +232,6 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 	// @TODO: document this
 	if label, _ := pod.GetLabels()["daemon"]; label == "fimd" {
 		var hostURL string
-
 		// @TODO: document this
 		if retryErr := retry.RetryOnConflict(wait.Backoff{
 			// @TODO: re-evaluate these values
@@ -239,20 +239,23 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 			Duration: 1 * time.Second,
 			Factor:   2.0,
 			Jitter:   0.1,
-		}, func() error {
-			var po *corev1.Pod
-			var err error
-			po, err = fwc.podLister.Pods(fimNamespace).Get(pod.Name)
+		}, func() (err error) {
+			po, err := fwc.podLister.Pods(fimNamespace).Get(pod.Name)
 			if err != nil {
+				err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
+					po.Name, errors.New("could not find pod"))
 				return err
 			}
 			hostURL, err = fwc.getHostURL(po)
 			if err != nil {
+				err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
+					po.Name, errors.New("pod host is not available"))
 				return err
 			}
 			// start grpc pool for connections to grpc server on daemon
 			if err = initFimdConnection(hostURL); err != nil {
-				return err
+				err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
+					po.Name, errors.New("could not initialize fimd connection pool"))
 			}
 			return err
 		}); retryErr != nil {
@@ -718,40 +721,46 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 		Duration: 1 * time.Second,
 		Factor:   2.0,
 		Jitter:   0.1,
-	}, func() error {
-		var po *corev1.Pod
-		var err error
+	}, func() (err error) {
 		// be sure to clear all slice elements first in case it's retrying
 		cids = cids[:0]
 
-		po, err = fwc.podLister.Pods(fw.Namespace).Get(pod.Name)
+		po, err := fwc.podLister.Pods(fw.Namespace).Get(pod.Name)
 		if err != nil {
 			return err
 		}
-
 		if po.Spec.NodeName == "" || po.Status.HostIP == "" {
-			return fmt.Errorf("pod %v hostname/ip not available", po.Name)
+			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
+				po.Name, errors.New("host name/ip not available"))
+			return err
 		}
 
 		for _, ctr := range po.Status.ContainerStatuses {
 			if ctr.ContainerID == "" {
-				return fmt.Errorf("pod %v containerid not available", po.Name)
+				err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
+					po.Name, errors.New("pod container id not available"))
+				return err
 			}
 			cids = append(cids, ctr.ContainerID)
 		}
 		if len(po.Spec.Containers) != len(cids) {
-			return fmt.Errorf("pod %v available pod container count does not match ready", po.Name)
+			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
+				po.Name, errors.New("available pod container count does not match ready"))
+			return err
 		}
 
 		nodeName = po.Spec.NodeName
 		if nodeName == "" {
-			return fmt.Errorf("pod %v node name is not available", po.Name)
+			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
+				po.Name, errors.New("pod node name is not available"))
+			return err
 		}
 
 		var hostErr error
 		hostURL, hostErr = fwc.getHostURLFromSiblingPod(po)
 		if hostErr != nil || hostURL == "" {
-			return fmt.Errorf("pod %v host is not available", po.Name)
+			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
+				po.Name, errors.New("pod host is not available"))
 		}
 		return err
 	}); retryErr != nil {
@@ -765,8 +774,7 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 		Duration: 1 * time.Second,
 		Factor:   2.0,
 		Jitter:   0.1,
-	}, func() error {
-		var err error
+	}, func() (err error) {
 		err = addFimdWatcher(hostURL, &pb.FimdConfig{
 			NodeName:    nodeName,
 			PodName:     pod.Name,

@@ -1,6 +1,7 @@
 package fimcontroller
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -10,8 +11,10 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
+	errorsapi "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	errorsutil "k8s.io/apimachinery/pkg/util/errors"
 	coreclient "k8s.io/client-go/kubernetes/typed/core/v1"
 	corelisters "k8s.io/client-go/listers/core/v1"
@@ -99,8 +102,7 @@ func updatePodWithRetries(podClient coreclient.PodInterface, podLister coreliste
 
 	var pod *corev1.Pod
 
-	retryErr := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		var err error
+	retryErr := retry.RetryOnConflict(retry.DefaultBackoff, func() (err error) {
 		pod, err = podLister.Pods(namespace).Get(name)
 		if err != nil {
 			return err
@@ -182,7 +184,8 @@ func addFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 
 	fc, _, err := getFimdConnection(hostURL)
 	if err != nil {
-		return err
+		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
+			config.NodeName, errors.New("failed to get fimd connection"))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -190,7 +193,8 @@ func addFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 
 	conn, err := fc.pool.Get(ctx)
 	if err != nil {
-		return err
+		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
+			config.NodeName, errors.New("failed to get fimd pool connection"))
 	}
 	client := pb.NewFimdClient(conn.ClientConn)
 	defer conn.Close()
@@ -198,11 +202,9 @@ func addFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 	var response *pb.FimdHandle
 	response, err = client.CreateWatch(ctx, config)
 	glog.Infof("Received CreateWatch response: %#v", response)
-	if err != nil {
-		return err
-	}
-	if response.NodeName == "" {
-		return fmt.Errorf("got empty response from fimd CreateWatch at %v", hostURL)
+	if err != nil || response.NodeName == "" {
+		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
+			config.NodeName, errors.New("fimd::CreateWatch failed"))
 	}
 	return nil
 }
@@ -212,7 +214,8 @@ func removeFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 
 	fc, _, err := getFimdConnection(hostURL)
 	if err != nil {
-		return err
+		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
+			config.NodeName, errors.New("failed to get fimd connection"))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -220,14 +223,16 @@ func removeFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 
 	conn, err := fc.pool.Get(ctx)
 	if err != nil {
-		return err
+		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
+			config.NodeName, errors.New("failed to get fimd pool connection"))
 	}
 	client := pb.NewFimdClient(conn.ClientConn)
 	defer conn.Close()
 
 	_, err = client.DestroyWatch(ctx, config)
 	if err != nil {
-		return err
+		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
+			config.NodeName, errors.New("fimd::DestroyWatch failed"))
 	}
 	return nil
 }
@@ -235,7 +240,8 @@ func removeFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 func getWatchState(hostURL string) ([]*pb.FimdHandle, error) {
 	fc, _, err := getFimdConnection(hostURL)
 	if err != nil {
-		return nil, err
+		return nil, errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
+			hostURL, errors.New("failed to get fimd connection"))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -243,7 +249,8 @@ func getWatchState(hostURL string) ([]*pb.FimdHandle, error) {
 
 	conn, err := fc.pool.Get(ctx)
 	if err != nil {
-		return nil, err
+		return nil, errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
+			hostURL, errors.New("failed to get fimd pool connection"))
 	}
 	client := pb.NewFimdClient(conn.ClientConn)
 	defer conn.Close()
@@ -251,7 +258,8 @@ func getWatchState(hostURL string) ([]*pb.FimdHandle, error) {
 	var watchers []*pb.FimdHandle
 	stream, err := client.GetWatchState(ctx, &pb.Empty{})
 	if err != nil {
-		return nil, err
+		return nil, errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
+			hostURL, errors.New("fimd::GetWatchState failed"))
 	}
 	for {
 		watch, err := stream.Recv()
