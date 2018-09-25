@@ -800,10 +800,10 @@ func (fwc *FimWatcherController) getHostURL(pod *corev1.Pod) (string, error) {
 	if fimdURL != "" {
 		return fimdURL, nil
 	}
-	if pod.Status.PodIP == "" {
+	if pod.Status.HostIP == "" {
 		return "", fmt.Errorf("cannot locate fimd pod on node %v", pod.Spec.NodeName)
 	}
-	return fmt.Sprintf("%s:%d", pod.Status.PodIP, fimdPort), nil
+	return fmt.Sprintf("%s:%d", pod.Status.HostIP, fimdPort), nil
 }
 
 func (fwc *FimWatcherController) getHostURLFromSiblingPod(pod *corev1.Pod) (string, error) {
