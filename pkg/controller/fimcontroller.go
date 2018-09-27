@@ -39,31 +39,34 @@ const (
 	fimNamespace           = "fim"
 	fimdPort               = 50051
 
-	// FimWatcherAnnotationKey value to annotate a pod being watched by a FimD daemon
+	// FimWatcherAnnotationKey value to annotate a pod being watched by a FimD daemon.
 	FimWatcherAnnotationKey = "clustergarage.io/fim-watcher"
 
-	// SuccessSynced is used as part of the Event 'reason' when a FimWatcher is synced
+	// SuccessSynced is used as part of the Event 'reason' when a FimWatcher is synced.
 	SuccessSynced = "Synced"
-	// SuccessAdded is used as part of the Event 'reason' when a FimWatcher is synced
+	// SuccessAdded is used as part of the Event 'reason' when a FimWatcher is synced.
 	SuccessAdded = "Added"
-	// SuccessRemoved is used as part of the Event 'reason' when a FimWatcher is synced
+	// SuccessRemoved is used as part of the Event 'reason' when a FimWatcher is synced.
 	SuccessRemoved = "Removed"
 	// MessageResourceAdded is the message used for an Event fired when a FimWatcher
-	// is synced added
+	// is synced added.
 	MessageResourceAdded = "Added FimD watcher on %v"
 	// MessageResourceRemoved is the message used for an Event fired when a FimWatcher
-	// is synced removed
+	// is synced removed.
 	MessageResourceRemoved = "Removed FimD watcher on %v"
 	// MessageResourceSynced is the message used for an Event fired when a FimWatcher
-	// is synced successfully
+	// is synced successfully.
 	MessageResourceSynced = "FimWatcher synced successfully"
 )
 
 var (
-	// FimD server to connect to if daemon is out-of-cluster.
+	// fimdURL is used to connect to the FimD gRPC server if daemon is out-of-cluster.
 	fimdURL string
-
-	// @TODO: document this
+	// updatePodQueue stores a local queue of pod updates that will ensure pods aren't
+	// being updated more than once at a single time. For example: if we get an addPod
+	// event for a daemon, which checks any pods that need an update, and another addPod
+	// event comes through for the pod that's already being updated, it won't queue
+	// again until it finishes processing and removes itself from the queue.
 	updatePodQueue []string
 )
 
@@ -74,21 +77,23 @@ type FimWatcherController struct {
 	// For example, this struct can be used (with adapters) to handle ReplicationController.
 	schema.GroupVersionKind
 
-	// kubeclientset is a standard kubernetes clientset
+	// kubeclientset is a standard Kubernetes clientset.
 	kubeclientset kubernetes.Interface
-	// fimclientset is a clientset for our own API group
+	// fimclientset is a clientset for our own API group.
 	fimclientset clientset.Interface
 
 	// A TTLCache of pod creates/deletes each fw expects to see.
 	expectations controller.ControllerExpectationsInterface
 
-	// A store of FimWatchers, populated by the shared informer passed to NewFimWatcherController
+	// A store of FimWatchers, populated by the shared informer passed to
+	// NewFimWatcherController.
 	fwLister listers.FimWatcherLister
 	// fwListerSynced returns true if the pod store has been synced at least once.
 	// Added as a member to the struct to allow injection for testing.
 	fwListerSynced cache.InformerSynced
 
-	// A store of pods, populated by the shared informer passed to NewFimWatcherController
+	// A store of pods, populated by the shared informer passed to
+	// NewFimWatcherController.
 	podLister corelisters.PodLister
 	// podListerSynced returns true if the pod store has been synced at least once.
 	// Added as a member to the struct to allow injection for testing.
@@ -105,11 +110,11 @@ type FimWatcherController struct {
 	recorder record.EventRecorder
 }
 
-// NewFimWatcherController returns a new fim watch controller
+// NewFimWatcherController returns a new FimWatcher controller.
 func NewFimWatcherController(fimd string, kubeclientset kubernetes.Interface, fimclientset clientset.Interface,
 	fwInformer informers.FimWatcherInformer, podInformer coreinformers.PodInformer) *FimWatcherController {
 
-	// Create event broadcaster
+	// Create event broadcaster.
 	// Add fimcontroller types to the default Kubernetes Scheme so Events can be
 	// logged for fimcontroller types.
 	fimscheme.AddToScheme(scheme.Scheme)
@@ -134,29 +139,30 @@ func NewFimWatcherController(fimd string, kubeclientset kubernetes.Interface, fi
 	}
 
 	glog.Info("Setting up event handlers")
-	// Set up an event handler for when FimWatcher resources change
+	// Set up an event handler for when FimWatcher resources change.
 	fwInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    fwc.enqueueFimWatcher,
 		UpdateFunc: fwc.updateFimWatcher,
 		DeleteFunc: fwc.enqueueFimWatcher,
 	})
 
+	// Set up an event handler for when Pod resources change.
 	podInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: fwc.addPod,
-		// This invokes the FimWatcher for every pod change, eg: host assignment. Though this might seem like
-		// overkill the most frequent pod update is status, and the associated FimWatcher will only list from
-		// local storage, so it should be ok.
+		// This invokes the FimWatcher for every pod change, eg: host assignment.
+		// Though this might seem like overkill the most frequent pod update is
+		// status, and the associated FimWatcher will only list from local storage,
+		// so it should be okay.
 		UpdateFunc: fwc.updatePod,
 		DeleteFunc: fwc.deletePod,
 	})
 
+	// If specifying a fimdURL for a daemon that is located out-of-cluster,
+	// initialize the fimd connection pool here, because we will not receive an
+	// addPod event where it is normally initialized.
 	fimdURL = fimd
 	if fimdURL != "" {
-		hostURL, err := fwc.getHostURL(nil)
-		if err != nil {
-			return nil
-		}
-		if err := initFimdConnection(hostURL); err != nil {
+		if err := initFimdConnection(fimdURL); err != nil {
 			return nil
 		}
 	}
@@ -172,18 +178,18 @@ func (fwc *FimWatcherController) Run(workers int, stopCh <-chan struct{}) error 
 	defer runtime.HandleCrash()
 	defer fwc.workqueue.ShutDown()
 
-	// Start the informer factories to begin populating the informer caches
+	// Start the informer factories to begin populating the informer caches.
 	glog.Info("Starting FimWatcher controller")
 	defer glog.Info("Shutting down FimWatcher controller")
 
-	// Wait for the caches to be synced before starting workers
+	// Wait for the caches to be synced before starting workers.
 	glog.Info("Waiting for informer caches to sync")
 	if ok := cache.WaitForCacheSync(stopCh, fwc.podListerSynced, fwc.fwListerSynced); !ok {
 		return fmt.Errorf("failed to wait for caches to sync")
 	}
 
 	glog.Info("Starting workers")
-	// Launch two workers to process FimWatcher resources
+	// Launch two workers to process FimWatcher resources.
 	for i := 0; i < workers; i++ {
 		go wait.Until(fwc.runWorker, time.Second, stopCh)
 	}
@@ -194,7 +200,7 @@ func (fwc *FimWatcherController) Run(workers int, stopCh <-chan struct{}) error 
 	return nil
 }
 
-// callback when FimWatcher is updated
+// updateFimWatcher is a callback for when a FimWatcher is updated.
 func (fwc *FimWatcherController) updateFimWatcher(old, new interface{}) {
 	oldFW := old.(*fimv1alpha1.FimWatcher)
 	newFW := new.(*fimv1alpha1.FimWatcher)
@@ -203,7 +209,7 @@ func (fwc *FimWatcherController) updateFimWatcher(old, new interface{}) {
 	subjectsChanged := !reflect.DeepEqual(newFW.Spec.Subjects, oldFW.Spec.Subjects)
 
 	if logFormatChanged || subjectsChanged {
-		// add new fimwatcher definitions
+		// Add new FimWatcher definitions.
 		selector, err := metav1.LabelSelectorAsSelector(newFW.Spec.Selector)
 		if err != nil {
 			return
@@ -218,23 +224,28 @@ func (fwc *FimWatcherController) updateFimWatcher(old, new interface{}) {
 	fwc.enqueueFimWatcher(new)
 }
 
-// When a pod is created, enqueue the fim watcher that manages it and update its expectations.
+// addPod is called when a pod is created, enqueue the FimWatcher that manages
+// it and update its expectations.
 func (fwc *FimWatcherController) addPod(obj interface{}) {
 	pod := obj.(*corev1.Pod)
 
 	if pod.DeletionTimestamp != nil {
-		// on a restart of the controller manager, it's possible a new pod shows up in a state that
-		// is already pending deletion. Prevent the pod from being a creation observation.
+		// On a restart of the controller manager, it's possible a new pod shows
+		// up in a state that is already pending deletion. Prevent the pod from
+		// being a creation observation.
 		fwc.deletePod(pod)
 		return
 	}
 
-	// @TODO: document this
+	// If this pod is a FimD pod, we need to first initialize the connection
+	// pool to the gRPC server run on the daemon. Then a check is done on any
+	// pods running on the same node as the daemon, if they match our nodeSelector
+	// then immediately enqueue the FimWatcher for additions.
 	if label, _ := pod.GetLabels()["daemon"]; label == "fimd" {
 		var hostURL string
-		// @TODO: document this
+		// Run this function with a retry, to make sure we get a connection to
+		// the daemon pod. If we exhaust all attempts, process error accordingly.
 		if retryErr := retry.RetryOnConflict(wait.Backoff{
-			// @TODO: re-evaluate these values
 			Steps:    10,
 			Duration: 1 * time.Second,
 			Factor:   2.0,
@@ -252,7 +263,7 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 					po.Name, errors.New("pod host is not available"))
 				return err
 			}
-			// start grpc pool for connections to grpc server on daemon
+			// Initialize gRPC pool for connections to gRPC server on daemon.
 			if err = initFimdConnection(hostURL); err != nil {
 				err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
 					po.Name, errors.New("could not initialize fimd connection pool"))
@@ -284,8 +295,9 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 		return
 	}
 
-	// get a list of all matching FimWatchers and sync them to see if anyone wants to adopt it
-	// do not observe creation because no controller should be waiting for an orphan
+	// Get a list of all matching FimWatchers and sync them to see if anyone
+	// wants to adopt it do not observe creation because no controller should
+	// be waiting for an orphan.
 	fws := fwc.getPodFimWatchers(pod)
 	if len(fws) == 0 {
 		return
@@ -297,9 +309,9 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 	}
 }
 
-// When a pod is updated, figure out what fim watcher(s) manage it and wake them
-// up. If the labels of the pod have changed we need to awaken both the old
-// and new fim watcher. old and new must be *corev1.Pod types.
+// updatePod is called when a pod is updated. Figure out what FimWatcher(s) manage
+// it and wake them up. If the labels of the pod have changed we need to awaken
+// both the old and new FimWatcher. old and new must be *corev1.Pod types.
 func (fwc *FimWatcherController) updatePod(old, new interface{}) {
 	newPod := new.(*corev1.Pod)
 	oldPod := old.(*corev1.Pod)
@@ -312,22 +324,27 @@ func (fwc *FimWatcherController) updatePod(old, new interface{}) {
 
 	labelChanged := !reflect.DeepEqual(newPod.Labels, oldPod.Labels)
 	if newPod.DeletionTimestamp != nil {
-		// when a pod is deleted gracefully it's deletion timestamp is first modified to reflect a grace period,
-		// and after such time has passed, the kubelet actually deletes it from the store. We receive an update
-		// for modification of the deletion timestamp and expect an fw to create more watchers asap, not wait
-		// until the kubelet actually deletes the pod. This is different from the Phase of a pod changing, because
-		// an fw never initiates a phase change, and so is never asleep waiting for the same.
+		// When a pod is deleted gracefully it's deletion timestamp is first
+		// modified to reflect a grace period, and after such time has passed,
+		// the kubelet actually deletes it from the store. We receive an update
+		// for modification of the deletion timestamp and expect an fw to create
+		// more watchers asap, not wait until the kubelet actually deletes the
+		// pod. This is different from the Phase of a pod changing, because an
+		// fw never initiates a phase change, and so is never asleep waiting for
+		// the same.
 		fwc.deletePod(newPod)
 		if labelChanged {
-			// we don't need to check the oldPod.DeletionTimestamp because DeletionTimestamp cannot be unset.
+			// We don't need to check the oldPod.DeletionTimestamp because
+			// DeletionTimestamp cannot be unset.
 			fwc.deletePod(oldPod)
 		}
 		return
 	}
 }
 
-// When a pod is deleted, enqueue the replica set that manages the pod and update its expectations.
-// obj could be an *v1.Pod, or a DeletionFinalStateUnknown marker item.
+// deletePod is called when a pod is deleted. Enqueue the FimWatcher that watches
+// the pod and update its expectations. obj could be an *v1.Pod, or a
+// DeletionFinalStateUnknown marker item.
 func (fwc *FimWatcherController) deletePod(obj interface{}) {
 	pod, ok := obj.(*corev1.Pod)
 
@@ -363,13 +380,15 @@ func (fwc *FimWatcherController) deletePod(obj interface{}) {
 		fwc.enqueueFimWatcher(fw)
 	}
 
-	// @TODO: document this
+	// If this pod is a FimD pod, we need to first destroy the connection
+	// pool to the gRPC server run on the daemon. Then remove relevant FimWatcher
+	// annotations from pods on the same node.
 	if label, _ := pod.GetLabels()["daemon"]; label == "fimd" {
-		// start grpc pool for connections to grpc server on daemon
 		hostURL, err := fwc.getHostURL(pod)
 		if err != nil {
 			return
 		}
+		// Destroy gRPC pool for connections to gRPC server on daemon.
 		if err := destroyFimdConnection(hostURL); err != nil {
 			return
 		}
@@ -392,8 +411,8 @@ func (fwc *FimWatcherController) deletePod(obj interface{}) {
 }
 
 // enqueueFimWatcher takes a FimWatcher resource and converts it into a namespace/name
-// string which is then put onto the work queue. This method should *not* be
-// passed resources of any type other than FimWatcher.
+// string which is then put onto the workqueue. This method should not be passed
+// resources of any type other than FimWatcher.
 func (fwc *FimWatcherController) enqueueFimWatcher(obj interface{}) {
 	key, err := controller.KeyFunc(obj)
 	if err != nil {
@@ -401,16 +420,6 @@ func (fwc *FimWatcherController) enqueueFimWatcher(obj interface{}) {
 		return
 	}
 	fwc.workqueue.AddRateLimited(key)
-}
-
-// obj could be an *fimv1alpha1.FimWatcher, or a DeletionFinalStateUnknown marker item.
-func (fwc *FimWatcherController) enqueueFimWatcherAfter(obj interface{}, after time.Duration) {
-	key, err := controller.KeyFunc(obj)
-	if err != nil {
-		runtime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
-		return
-	}
-	fwc.workqueue.AddAfter(key, after)
 }
 
 // runWorker is a long-running function that will continually call the
@@ -425,7 +434,6 @@ func (fwc *FimWatcherController) runWorker() {
 // attempt to process it, by calling the syncHandler.
 func (fwc *FimWatcherController) processNextWorkItem() bool {
 	obj, shutdown := fwc.workqueue.Get()
-
 	if shutdown {
 		return false
 	}
@@ -470,12 +478,11 @@ func (fwc *FimWatcherController) processNextWorkItem() bool {
 		runtime.HandleError(err)
 		return true
 	}
-
 	return true
 }
 
 // manageObserverPods checks and updates observers for the given FimWatcher.
-// It will requeue the fim watcher in case of an error while creating/deleting pods.
+// It will requeue the FimWatcher in case of an error while creating/deleting pods.
 func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPods []*corev1.Pod, fw *fimv1alpha1.FimWatcher) error {
 	fwKey, err := controller.KeyFunc(fw)
 	if err != nil {
@@ -554,14 +561,14 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 		glog.Infof("Finished syncing %v %q (%v)", fwc.Kind, key, time.Since(startTime))
 	}()
 
-	// Convert the namespace/name string into a distinct namespace and name
+	// Convert the namespace/name string into a distinct namespace and name.
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
 		runtime.HandleError(fmt.Errorf("invalid resource key: %s", key))
 		return nil
 	}
 
-	// Get the FimWatcher resource with this namespace/name
+	// Get the FimWatcher resource with this namespace/name.
 	fw, err := fwc.fwLister.FimWatchers(namespace).Get(name)
 	if err != nil {
 		// The FimWatcher resource may no longer exist, in which case we stop
@@ -576,7 +583,7 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 
 	fwNeedsSync := fwc.expectations.SatisfiedExpectations(key)
 
-	// get the diff between all pods and selected pods
+	// Get the diff between all pods and pods that match the FimWatch selector.
 	var rmPods []*corev1.Pod
 	var addPods []*corev1.Pod
 
@@ -590,13 +597,13 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 		return err
 	}
 
-	// @TODO: only get pods with annotation: pod.GetAnnotations()[FimWatcherAnnotationKey]
+	// @TODO: only get pods with annotation: FimWatcherAnnotationKey
 	allPods, err := fwc.podLister.Pods(fw.Namespace).List(labels.Everything())
 	if err != nil {
 		return err
 	}
 
-	// sync watch state
+	// Get current watch state from FimD daemon.
 	watchStates, err := fwc.getWatchStates()
 	if err != nil {
 		return err
@@ -608,7 +615,7 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 		if pod.DeletionTimestamp == nil && !wsFound {
 			var found bool
 			for _, p := range updatePodQueue {
-				// check if pod is already in updatePodQueue
+				// Check if pod is already in updatePodQueue.
 				if pod.Name == p {
 					found = true
 					break
@@ -656,7 +663,7 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 	updatedFW, err := updateFimWatcherStatus(fwc.fimclientset.FimcontrollerV1alpha1().FimWatchers(fw.Namespace), fw, newStatus)
 	if err != nil {
 		// Multiple things could lead to this update failing. Requeuing the replica set ensures
-		// Returning an error causes a requeue without forcing a hotloop
+		// Returning an error causes a requeue without forcing a hotloop.
 		return err
 	}
 	_, err = fwc.fimclientset.FimcontrollerV1alpha1().FimWatchers(fw.Namespace).Update(updatedFW)
@@ -668,7 +675,7 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 	return manageSubjectsErr
 }
 
-// getPodFimWatchers returns a list of FimWatchers matching the given pod
+// getPodFimWatchers returns a list of FimWatchers matching the given pod.
 func (fwc *FimWatcherController) getPodFimWatchers(pod *corev1.Pod) []*fimv1alpha1.FimWatcher {
 	if len(pod.Labels) == 0 {
 		glog.V(4).Infof("no FimWatchers found for pod %v because it has no labels", pod.Name)
@@ -691,7 +698,8 @@ func (fwc *FimWatcherController) getPodFimWatchers(pod *corev1.Pod) []*fimv1alph
 			return nil
 		}
 
-		// If a FimWatcher with a nil or empty selector creeps in, it should match nothing, not everything.
+		// If a FimWatcher with a nil or empty selector creeps in, it should
+		// match nothing, not everything.
 		if selector.Empty() || !selector.Matches(labels.Set(pod.Labels)) {
 			continue
 		}
@@ -703,18 +711,23 @@ func (fwc *FimWatcherController) getPodFimWatchers(pod *corev1.Pod) []*fimv1alph
 		return nil
 	}
 	if len(fws) > 1 {
-		// ControllerRef will ensure we don't do anything crazy, but more than one
-		// item in this list nevertheless constitutes user error.
+		// ControllerRef will ensure we don't do anything crazy, but more than
+		//one item in this list nevertheless constitutes user error.
 		runtime.HandleError(fmt.Errorf("user error; more than one %v is selecting pods with labels: %+v", fwc.Kind, pod.Labels))
 	}
 	return fws
 }
 
+// updatePodOnceValid first retries getting the pod hostURL to connect to the FimD
+// gRPC server. Then it retries adding a new FimD watcher by calling the gRPC server
+// CreateWatch function; on success it updates the appropriate FimWatcher annotations
+// so we can mark it now "watched".
 func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1alpha1.FimWatcher) {
 	var cids []string
 	var nodeName, hostURL string
 
-	// @TODO: document this
+	// Run this function with a retry, to make sure we get a connection to
+	// the daemon pod. If we exhaust all attempts, process error accordingly.
 	if retryErr := retry.RetryOnConflict(wait.Backoff{
 		// @TODO: re-evaluate these values
 		Steps:    10,
@@ -767,7 +780,8 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 		return
 	}
 
-	// @TODO: document this
+	// Run this function with a retry, to make sure we get a successful response
+	// from the daemon. If we exhaust all attempts, process error accordingly.
 	if retryErr := retry.RetryOnConflict(wait.Backoff{
 		// @TODO: re-evaluate these values
 		Steps:    10,
@@ -796,6 +810,10 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 	fwc.recorder.Eventf(fw, corev1.EventTypeNormal, SuccessAdded, MessageResourceAdded, nodeName)
 }
 
+// getHostURL constructs a URL from the pod's hostIP and hard-coded FimD port.
+// The pod specified in this function is assumed to be a daemon pod.
+// If fimdURL was specified to the controller, to connect to an out-of-cluster
+// daemon, use this instead.
 func (fwc *FimWatcherController) getHostURL(pod *corev1.Pod) (string, error) {
 	if fimdURL != "" {
 		return fimdURL, nil
@@ -806,6 +824,11 @@ func (fwc *FimWatcherController) getHostURL(pod *corev1.Pod) (string, error) {
 	return fmt.Sprintf("%s:%d", pod.Status.HostIP, fimdPort), nil
 }
 
+// getHostURLFromSiblingPod constructs a URL from a daemon pod running on the
+// same host; it uses the daemon pod's hostIP and hard-coded FimD port. The pod
+// specified in this function is assumed to be a non-daemon pod.
+// If fimdURL was specified to the controller, to connect to an out-of-cluster
+// daemon, use this instead.
 func (fwc *FimWatcherController) getHostURLFromSiblingPod(pod *corev1.Pod) (string, error) {
 	if fimdURL != "" {
 		return fimdURL, nil
@@ -835,6 +858,8 @@ func (fwc *FimWatcherController) getHostURLFromSiblingPod(pod *corev1.Pod) (stri
 	return "", fmt.Errorf("cannot locate fimd pod on node %v", pod.Spec.NodeName)
 }
 
+// getFimWatcherSubjects is a helper function that given a FimWatcher, constructs
+// a list of Subjects to be used when creating a new FimD watcher.
 func (fwc *FimWatcherController) getFimWatcherSubjects(fw *fimv1alpha1.FimWatcher) []*pb.FimWatcherSubject {
 	var subjects []*pb.FimWatcherSubject
 	for _, s := range fw.Spec.Subjects {
@@ -850,10 +875,15 @@ func (fwc *FimWatcherController) getFimWatcherSubjects(fw *fimv1alpha1.FimWatche
 	return subjects
 }
 
+// getWatchStates is a helper function that gets all the current watch states
+// from every FimD pod running in the clutser. This is used in the syncHandler
+// to run exactly once each sync.
 func (fwc *FimWatcherController) getWatchStates() ([][]*pb.FimdHandle, error) {
 	var watchStates [][]*pb.FimdHandle
 
-	// @TODO: document this
+	// If specifying a fimdURL for a daemon that is located out-of-cluster,
+	// we assume a single FimD pod in the cluster; get the watch state of this
+	// daemon pod only.
 	if fimdURL != "" {
 		ws, err := getWatchState(fimdURL)
 		if err != nil {
@@ -863,7 +893,6 @@ func (fwc *FimWatcherController) getWatchStates() ([][]*pb.FimdHandle, error) {
 		return watchStates, nil
 	}
 
-	// @TODO: document this
 	selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
 		MatchLabels: map[string]string{"daemon": "fimd"},
 	})
@@ -888,6 +917,8 @@ func (fwc *FimWatcherController) getWatchStates() ([][]*pb.FimdHandle, error) {
 	return watchStates, nil
 }
 
+// isPodInWatchState is a helper function that given a pod and list of watch
+// states, find if pod name appears anywhere in the list.
 func (fwc *FimWatcherController) isPodInWatchState(pod *corev1.Pod, watchStates [][]*pb.FimdHandle) bool {
 	var found bool
 	for _, watchState := range watchStates {
@@ -901,6 +932,9 @@ func (fwc *FimWatcherController) isPodInWatchState(pod *corev1.Pod, watchStates 
 	return found
 }
 
+// removePodFromUpdateQueue is a helper function that given a pod name, remove
+// it from the update pod queue in order to be marked for a new update in the
+// future.
 func (fwc *FimWatcherController) removePodFromUpdateQueue(podName string) {
 	for index, p := range updatePodQueue {
 		if podName == p {

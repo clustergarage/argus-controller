@@ -25,23 +25,36 @@ import (
 	pb "github.com/clustergarage/fim-proto/golang"
 )
 
-// FimdConnection maps a hostURL with a grpcpool
+// FimdConnection maps a FimD hostURL with a grpcpool.
 type FimdConnection struct {
 	hostURL string
 	pool    *grpcpool.Pool
 }
 
 var (
+	// fcInitialConnections is the amount of pool connections to intiialize
+	// when creating the grpcpool.
 	fcInitialConnections = 10
+	// fcMaximumConnections is the maximum amount of pool connections the
+	// grpcpool allows. After all connections are exhausted, it will fail to
+	// connect to this pool until some connections are freed up.
 	fcMaximumConnections = 50
-	fcIdleTimeout        = 10 * time.Second
-	fcMaxLifeDuration    = 5 * time.Minute
+	// fcIdleTimeout is the amount of time a pool connection can idle before
+	// it is closed.
+	fcIdleTimeout = 10 * time.Second
+	// fcMaxLifeDuration is the amount of time before a closed connection can
+	// be recycled back into the pool.
+	fcMaxLifeDuration = 5 * time.Minute
 
+	// fimdConnections is an array of stored FimdConnection mappings.
 	fimdConnections []*FimdConnection
 )
 
+// updatePodFunc defines an function signature to be passed into
+// updatePodWithRetries.
 type updatePodFunc func(pod *corev1.Pod) error
 
+// updateFimWatcherStatus updates the status of the specified FimWatcher object.
 func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1alpha1.FimWatcher,
 	newStatus fimv1alpha1.FimWatcherStatus) (*fimv1alpha1.FimWatcher, error) {
 
@@ -58,6 +71,7 @@ func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1al
 	return fwCopy, nil
 }
 
+// calculateStatus creates a new status from a given FimWatcher and filteredPods array.
 func calculateStatus(fw *fimv1alpha1.FimWatcher, filteredPods []*corev1.Pod, manageFimWatchersErr error) fimv1alpha1.FimWatcherStatus {
 	newStatus := fw.Status
 	// Count the number of pods that have labels matching the labels of the pod
@@ -75,6 +89,9 @@ func calculateStatus(fw *fimv1alpha1.FimWatcher, filteredPods []*corev1.Pod, man
 	return newStatus
 }
 
+// updateAnnotations takes an array of annotations to remove or add and an object
+// to apply this update to; this will modify the object's Annotations map by way
+// of an Accessor.
 func updateAnnotations(removeAnnotations []string, newAnnotations map[string]string, obj runtime.Object) error {
 	accessor, err := meta.Accessor(obj)
 	if err != nil {
@@ -96,7 +113,7 @@ func updateAnnotations(removeAnnotations []string, newAnnotations map[string]str
 	return nil
 }
 
-// UpdatePodWithRetries updates a pod with given applyUpdate function.
+// updatePodWithRetries updates a pod with given applyUpdate function.
 func updatePodWithRetries(podClient coreclient.PodInterface, podLister corelisters.PodLister,
 	namespace, name string, applyUpdate updatePodFunc) (*corev1.Pod, error) {
 
@@ -126,7 +143,7 @@ func updatePodWithRetries(podClient coreclient.PodInterface, podLister coreliste
 	return pod, retryErr
 }
 
-// @TODO: update with error return
+// getPodContainerIDs returns a list of container IDs given a pod.
 func getPodContainerIDs(pod *corev1.Pod) []string {
 	var cids []string
 	if len(pod.Status.ContainerStatuses) == 0 {
@@ -138,6 +155,7 @@ func getPodContainerIDs(pod *corev1.Pod) []string {
 	return cids
 }
 
+// getFimdConnection returns a FimdConnection object given a hostURL.
 func getFimdConnection(hostURL string) (*FimdConnection, int, error) {
 	for i, fc := range fimdConnections {
 		if fc.hostURL == hostURL {
@@ -147,6 +165,7 @@ func getFimdConnection(hostURL string) (*FimdConnection, int, error) {
 	return nil, -1, fmt.Errorf("could not connect to fimd at hostURL %v", hostURL)
 }
 
+// initFimdConnection will initialize a new FimdConnection object given a hostURL.
 func initFimdConnection(hostURL string) error {
 	pool, err := grpcpool.New(func() (*grpc.ClientConn, error) {
 		conn, err := grpc.Dial(hostURL, grpc.WithInsecure())
@@ -167,6 +186,8 @@ func initFimdConnection(hostURL string) error {
 	return nil
 }
 
+// destroyFimdConnection will remove a new FimdConnection object from the
+// fimdConnections array, given a hostURL.
 func destroyFimdConnection(hostURL string) error {
 	fc, index, err := getFimdConnection(hostURL)
 	if err != nil {
@@ -174,11 +195,11 @@ func destroyFimdConnection(hostURL string) error {
 	}
 	fc.pool.Close()
 
-	// remove from host connection pool array
 	fimdConnections = append(fimdConnections[:index], fimdConnections[index+1:]...)
 	return nil
 }
 
+// addFimdWatcher sends a message to the FimD daemon to create a new watcher.
 func addFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 	glog.Infof("Sending CreateWatch call to FimD daemon, host: %s, request: %#v)", hostURL, config)
 
@@ -209,6 +230,8 @@ func addFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 	return nil
 }
 
+// removeFimdWatcher sends a message to the FimD daemon to remove an existing
+// watcher.
 func removeFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 	glog.Infof("Sending DestroyWatch call to FimD daemon, host: %s, request: %#v", hostURL, config)
 
@@ -237,6 +260,8 @@ func removeFimdWatcher(hostURL string, config *pb.FimdConfig) error {
 	return nil
 }
 
+// getWatchState sends a message to the FimD daemon to return the current state
+// of the watchers being watched via inotify.
 func getWatchState(hostURL string) ([]*pb.FimdHandle, error) {
 	fc, _, err := getFimdConnection(hostURL)
 	if err != nil {
