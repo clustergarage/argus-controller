@@ -45,6 +45,6 @@ go mod tidy
 ## Verifying Code
 
 ```
-go vet pkg/controller/fimcontroller.go pkg/controller/fimdcontroller_utils.go
-golint pkg/controller/fimcontroller.go pkg/controller/fimdcontroller_utils.go
+go vet pkg/controller/fimcontroller.go pkg/controller/fimcontroller_utils.go
+golint pkg/controller/fimcontroller.go pkg/controller/fimcontroller_utils.go
 ```
