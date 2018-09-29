@@ -1,5 +1,7 @@
 # fim-controller
 
+[![go report](https://goreportcard.com/badge/github.com/clustergarage/fim-controller?style=flat-square)](https://goreportcard.com/report/github.com/clustergarage/fim-controller)
+
 ## Prerequisites
 
 - go v1.11+
