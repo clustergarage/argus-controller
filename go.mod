@@ -3,7 +3,7 @@ module clustergarage.io/fim-controller
 require (
 	github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973 // indirect
 	github.com/boltdb/bolt v1.3.1 // indirect
-	github.com/clustergarage/fim-proto v0.0.0-20180921144330-3717c2f334aa
+	github.com/clustergarage/fim-proto v0.0.0-20180928014919-eef12f3b3a59
 	github.com/coreos/bbolt v1.3.0 // indirect
 	github.com/coreos/etcd v3.3.9+incompatible // indirect
 	github.com/coreos/go-semver v0.2.0 // indirect
@@ -15,8 +15,9 @@ require (
 	github.com/evanphx/json-patch v4.1.0+incompatible // indirect
 	github.com/ghodss/yaml v0.0.0-20150909031657-73d445a93680 // indirect
 	github.com/gogo/protobuf v0.0.0-20170330071051-c0656edd0d9e // indirect
-	github.com/golang/glog v0.0.0-20141105023935-44145f04b68c
+	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b
 	github.com/golang/groupcache v0.0.0-20160516000752-02826c3e7903 // indirect
+	github.com/golang/mock v1.1.1
 	github.com/google/btree v0.0.0-20160524151835-7d79101e329e // indirect
 	github.com/google/gofuzz v0.0.0-20161122191042-44d81051d367 // indirect
 	github.com/google/uuid v1.0.0 // indirect
@@ -38,7 +39,6 @@ require (
 	github.com/pborman/uuid v0.0.0-20180909234540-25cd46ecac86 // indirect
 	github.com/peterbourgon/diskv v2.0.1+incompatible // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/processout/grpc-go-pool v1.2.1
 	github.com/prometheus/client_golang v0.8.0 // indirect
 	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910 // indirect
 	github.com/prometheus/common v0.0.0-20180801064454-c7de2306084e // indirect
@@ -52,12 +52,9 @@ require (
 	github.com/ugorji/go/codec v0.0.0-20180831062425-e253f1f20942 // indirect
 	github.com/xiang90/probing v0.0.0-20160813154853-07dd2e8dfe18 // indirect
 	golang.org/x/crypto v0.0.0-20180222182404-49796115aa4b // indirect
-	golang.org/x/lint v0.0.0-20180702182130-06c8688daad7 // indirect
-	golang.org/x/net v0.0.0-20180906233101-161cd47e91fd
+	golang.org/x/net v0.0.0-20180926154720-4dfa2610cdf3
 	golang.org/x/time v0.0.0-20161028155119-f51c12702a4d // indirect
-	golang.org/x/tools v0.0.0-20180917221912-90fa682c2a6e // indirect
-	google.golang.org/genproto v0.0.0-20180627194029-ff3583edef7d // indirect
-	google.golang.org/grpc v0.0.0-20180702170826-d35d006431ef
+	google.golang.org/grpc v1.15.0
 	gopkg.in/airbrake/gobrake.v2 v2.0.9 // indirect
 	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
 	gopkg.in/gemnasium/logrus-airbrake-hook.v2 v2.1.2 // indirect
@@ -69,7 +66,7 @@ require (
 	k8s.io/apimachinery v0.0.0-20180624185650-1c56055d3f2f
 	k8s.io/apiserver v0.0.0-20180626074217-e9e4beec4b15 // indirect
 	k8s.io/client-go v0.0.0-20180624190844-615dfd3eb0c3
-	k8s.io/code-generator v0.0.0-20180822150921-aae79feb89bd // indirect
+	k8s.io/code-generator v0.0.0-20180925131323-731fd6119048 // indirect
 	k8s.io/gengo v0.0.0-20180813235010-4242d8e6c5db // indirect
 	k8s.io/kube-openapi v0.0.0-20180711000925-0cf8f7e6ed1d // indirect
 	k8s.io/kubernetes v0.0.0-20180627003308-05f073dc28b4

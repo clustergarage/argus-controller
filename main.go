@@ -54,10 +54,15 @@ func main() {
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(kubeclientset, time.Second*30)
 	fimInformerFactory := informers.NewSharedInformerFactory(fimclientset, time.Second*30)
 
-	controller := fimcontroller.NewFimWatcherController(fimdURL,
-		kubeclientset, fimclientset,
+	var fimdConnection *fimcontroller.FimdConnection
+	if fimdURL != "" {
+		fimdConnection = fimcontroller.NewFimdConnection(fimdURL)
+	}
+
+	controller := fimcontroller.NewFimWatcherController(kubeclientset, fimclientset,
 		fimInformerFactory.Fimcontroller().V1alpha1().FimWatchers(),
-		kubeInformerFactory.Core().V1().Pods())
+		kubeInformerFactory.Core().V1().Pods(),
+		fimdConnection)
 
 	go kubeInformerFactory.Start(stopCh)
 	go fimInformerFactory.Start(stopCh)

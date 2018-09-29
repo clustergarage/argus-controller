@@ -2,12 +2,10 @@ package fimcontroller
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"time"
 
 	"github.com/golang/glog"
-	"github.com/processout/grpc-go-pool"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
@@ -25,30 +23,85 @@ import (
 	pb "github.com/clustergarage/fim-proto/golang"
 )
 
-// FimdConnection maps a FimD hostURL with a grpcpool.
+// FimdConnection defines a FimD gRPC server URL and a gRPC client to connect
+// to in order to make add and remove watcher calls, as well as getting the
+// current state of the daemon to keep the controller<-->daemon in sync.
 type FimdConnection struct {
 	hostURL string
-	pool    *grpcpool.Pool
+	client  pb.FimdClient
 }
 
-var (
-	// fcInitialConnections is the amount of pool connections to intiialize
-	// when creating the grpcpool.
-	fcInitialConnections = 10
-	// fcMaximumConnections is the maximum amount of pool connections the
-	// grpcpool allows. After all connections are exhausted, it will fail to
-	// connect to this pool until some connections are freed up.
-	fcMaximumConnections = 50
-	// fcIdleTimeout is the amount of time a pool connection can idle before
-	// it is closed.
-	fcIdleTimeout = 10 * time.Second
-	// fcMaxLifeDuration is the amount of time before a closed connection can
-	// be recycled back into the pool.
-	fcMaxLifeDuration = 5 * time.Minute
+// NewFimdConnection creates a new FimdConnection type given a required hostURL
+// and an optional gRPC client; if the client is not specified, this is created
+// for you here.
+func NewFimdConnection(hostURL string, client ...pb.FimdClient) *FimdConnection {
+	fc := &FimdConnection{hostURL: hostURL}
+	if len(client) > 0 {
+		fc.client = client[0]
+	} else {
+		if conn, err := grpc.Dial(fc.hostURL, grpc.WithInsecure()); err == nil {
+			fc.client = pb.NewFimdClient(conn)
+		}
+	}
+	return fc
+}
 
-	// fimdConnections is an array of stored FimdConnection mappings.
-	fimdConnections []*FimdConnection
-)
+// AddFimdWatcher sends a message to the FimD daemon to create a new watcher.
+func (fc *FimdConnection) AddFimdWatcher(config *pb.FimdConfig) error {
+	glog.Infof("Sending CreateWatch call to FimD daemon, host: %s, request: %#v)", fc.hostURL, config)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	defer ctx.Done()
+
+	var response *pb.FimdHandle
+	response, err := fc.client.CreateWatch(ctx, config)
+	glog.Infof("Received CreateWatch response: %#v", response)
+	if err != nil || response.NodeName == "" {
+		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
+			config.NodeName, errors.New("fimd::CreateWatch failed"))
+	}
+	return nil
+}
+
+// RemoveFimdWatcher sends a message to the FimD daemon to remove an existing
+// watcher.
+func (fc *FimdConnection) RemoveFimdWatcher(config *pb.FimdConfig) error {
+	glog.Infof("Sending DestroyWatch call to FimD daemon, host: %s, request: %#v", fc.hostURL, config)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	defer ctx.Done()
+
+	_, err := fc.client.DestroyWatch(ctx, config)
+	if err != nil {
+		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
+			config.NodeName, errors.New("fimd::DestroyWatch failed"))
+	}
+	return nil
+}
+
+// GetWatchState sends a message to the FimD daemon to return the current state
+// of the watchers being watched via inotify.
+func (fc *FimdConnection) GetWatchState() ([]*pb.FimdHandle, error) {
+	ctx := context.Background()
+	defer ctx.Done()
+
+	var watchers []*pb.FimdHandle
+	stream, err := fc.client.GetWatchState(ctx, &pb.Empty{})
+	if err != nil {
+		return nil, errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
+			fc.hostURL, errors.New("fimd::GetWatchState failed"))
+	}
+	for {
+		watch, err := stream.Recv()
+		if err == io.EOF || err != nil {
+			break
+		}
+		watchers = append(watchers, watch)
+	}
+	return watchers, nil
+}
 
 // updatePodFunc defines an function signature to be passed into
 // updatePodWithRetries.
@@ -153,148 +206,4 @@ func getPodContainerIDs(pod *corev1.Pod) []string {
 		cids = append(cids, ctr.ContainerID)
 	}
 	return cids
-}
-
-// getFimdConnection returns a FimdConnection object given a hostURL.
-func getFimdConnection(hostURL string) (*FimdConnection, int, error) {
-	for i, fc := range fimdConnections {
-		if fc.hostURL == hostURL {
-			return fc, i, nil
-		}
-	}
-	return nil, -1, fmt.Errorf("could not connect to fimd at hostURL %v", hostURL)
-}
-
-// initFimdConnection will initialize a new FimdConnection object given a hostURL.
-func initFimdConnection(hostURL string) error {
-	pool, err := grpcpool.New(func() (*grpc.ClientConn, error) {
-		conn, err := grpc.Dial(hostURL, grpc.WithInsecure())
-		if err != nil {
-			return nil, err
-		}
-		return conn, err
-	}, fcInitialConnections, fcMaximumConnections, fcIdleTimeout, fcMaxLifeDuration)
-	if err != nil {
-		return err
-	}
-
-	// store in host connection pool array
-	fimdConnections = append(fimdConnections, &FimdConnection{
-		hostURL: hostURL,
-		pool:    pool,
-	})
-	return nil
-}
-
-// destroyFimdConnection will remove a new FimdConnection object from the
-// fimdConnections array, given a hostURL.
-func destroyFimdConnection(hostURL string) error {
-	fc, index, err := getFimdConnection(hostURL)
-	if err != nil {
-		return err
-	}
-	fc.pool.Close()
-
-	fimdConnections = append(fimdConnections[:index], fimdConnections[index+1:]...)
-	return nil
-}
-
-// addFimdWatcher sends a message to the FimD daemon to create a new watcher.
-func addFimdWatcher(hostURL string, config *pb.FimdConfig) error {
-	glog.Infof("Sending CreateWatch call to FimD daemon, host: %s, request: %#v)", hostURL, config)
-
-	fc, _, err := getFimdConnection(hostURL)
-	if err != nil {
-		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
-			config.NodeName, errors.New("failed to get fimd connection"))
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	defer ctx.Done()
-
-	conn, err := fc.pool.Get(ctx)
-	if err != nil {
-		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
-			config.NodeName, errors.New("failed to get fimd pool connection"))
-	}
-	client := pb.NewFimdClient(conn.ClientConn)
-	defer conn.Close()
-
-	var response *pb.FimdHandle
-	response, err = client.CreateWatch(ctx, config)
-	glog.Infof("Received CreateWatch response: %#v", response)
-	if err != nil || response.NodeName == "" {
-		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
-			config.NodeName, errors.New("fimd::CreateWatch failed"))
-	}
-	return nil
-}
-
-// removeFimdWatcher sends a message to the FimD daemon to remove an existing
-// watcher.
-func removeFimdWatcher(hostURL string, config *pb.FimdConfig) error {
-	glog.Infof("Sending DestroyWatch call to FimD daemon, host: %s, request: %#v", hostURL, config)
-
-	fc, _, err := getFimdConnection(hostURL)
-	if err != nil {
-		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
-			config.NodeName, errors.New("failed to get fimd connection"))
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	defer ctx.Done()
-
-	conn, err := fc.pool.Get(ctx)
-	if err != nil {
-		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
-			config.NodeName, errors.New("failed to get fimd pool connection"))
-	}
-	client := pb.NewFimdClient(conn.ClientConn)
-	defer conn.Close()
-
-	_, err = client.DestroyWatch(ctx, config)
-	if err != nil {
-		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
-			config.NodeName, errors.New("fimd::DestroyWatch failed"))
-	}
-	return nil
-}
-
-// getWatchState sends a message to the FimD daemon to return the current state
-// of the watchers being watched via inotify.
-func getWatchState(hostURL string) ([]*pb.FimdHandle, error) {
-	fc, _, err := getFimdConnection(hostURL)
-	if err != nil {
-		return nil, errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
-			hostURL, errors.New("failed to get fimd connection"))
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	defer ctx.Done()
-
-	conn, err := fc.pool.Get(ctx)
-	if err != nil {
-		return nil, errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
-			hostURL, errors.New("failed to get fimd pool connection"))
-	}
-	client := pb.NewFimdClient(conn.ClientConn)
-	defer conn.Close()
-
-	var watchers []*pb.FimdHandle
-	stream, err := client.GetWatchState(ctx, &pb.Empty{})
-	if err != nil {
-		return nil, errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
-			hostURL, errors.New("fimd::GetWatchState failed"))
-	}
-	for {
-		watch, err := stream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			break
-		}
-		watchers = append(watchers, watch)
-	}
-	return watchers, nil
 }

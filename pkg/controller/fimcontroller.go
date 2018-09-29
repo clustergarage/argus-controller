@@ -62,6 +62,7 @@ const (
 var (
 	// fimdURL is used to connect to the FimD gRPC server if daemon is out-of-cluster.
 	fimdURL string
+
 	// updatePodQueue stores a local queue of pod updates that will ensure pods aren't
 	// being updated more than once at a single time. For example: if we get an addPod
 	// event for a daemon, which checks any pods that need an update, and another addPod
@@ -108,11 +109,17 @@ type FimWatcherController struct {
 	// recorder is an event recorder for recording Event resources to the
 	// Kubernetes API.
 	recorder record.EventRecorder
+
+	// fimdConnections is a collection of connections we have open to the FimD
+	// server which wrap important functions to add, remove, and get a current
+	// up-to-date state of what the daemon thinks it should be watching.
+	fimdConnections []*FimdConnection
 }
 
 // NewFimWatcherController returns a new FimWatcher controller.
-func NewFimWatcherController(fimd string, kubeclientset kubernetes.Interface, fimclientset clientset.Interface,
-	fwInformer informers.FimWatcherInformer, podInformer coreinformers.PodInformer) *FimWatcherController {
+func NewFimWatcherController(kubeclientset kubernetes.Interface, fimclientset clientset.Interface,
+	fwInformer informers.FimWatcherInformer, podInformer coreinformers.PodInformer,
+	fimdConnection *FimdConnection) *FimWatcherController {
 
 	// Create event broadcaster.
 	// Add fimcontroller types to the default Kubernetes Scheme so Events can be
@@ -157,14 +164,12 @@ func NewFimWatcherController(fimd string, kubeclientset kubernetes.Interface, fi
 		DeleteFunc: fwc.deletePod,
 	})
 
-	// If specifying a fimdURL for a daemon that is located out-of-cluster,
-	// initialize the fimd connection pool here, because we will not receive an
-	// addPod event where it is normally initialized.
-	fimdURL = fimd
-	if fimdURL != "" {
-		if err := initFimdConnection(fimdURL); err != nil {
-			return nil
-		}
+	// If specifying a fimdConnection for a daemon that is located out-of-cluster,
+	// initialize the fimd connection here, because we will not receive an addPod
+	// event where it is normally initialized.
+	if fimdConnection != nil {
+		fwc.fimdConnections = append(fwc.fimdConnections, fimdConnection)
+		fimdURL = fimdConnection.hostURL
 	}
 
 	return fwc
@@ -238,8 +243,8 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 	}
 
 	// If this pod is a FimD pod, we need to first initialize the connection
-	// pool to the gRPC server run on the daemon. Then a check is done on any
-	// pods running on the same node as the daemon, if they match our nodeSelector
+	// to the gRPC server run on the daemon. Then a check is done on any pods
+	// running on the same node as the daemon, if they match our nodeSelector
 	// then immediately enqueue the FimWatcher for additions.
 	if label, _ := pod.GetLabels()["daemon"]; label == "fimd" {
 		var hostURL string
@@ -263,11 +268,8 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 					po.Name, errors.New("pod host is not available"))
 				return err
 			}
-			// Initialize gRPC pool for connections to gRPC server on daemon.
-			if err = initFimdConnection(hostURL); err != nil {
-				err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
-					po.Name, errors.New("could not initialize fimd connection pool"))
-			}
+			// Initialize connection to gRPC server on daemon.
+			fwc.fimdConnections = append(fwc.fimdConnections, NewFimdConnection(hostURL))
 			return err
 		}); retryErr != nil {
 			return
@@ -381,16 +383,16 @@ func (fwc *FimWatcherController) deletePod(obj interface{}) {
 	}
 
 	// If this pod is a FimD pod, we need to first destroy the connection
-	// pool to the gRPC server run on the daemon. Then remove relevant FimWatcher
+	// to the gRPC server run on the daemon. Then remove relevant FimWatcher
 	// annotations from pods on the same node.
 	if label, _ := pod.GetLabels()["daemon"]; label == "fimd" {
 		hostURL, err := fwc.getHostURL(pod)
 		if err != nil {
 			return
 		}
-		// Destroy gRPC pool for connections to gRPC server on daemon.
-		if err := destroyFimdConnection(hostURL); err != nil {
-			return
+		// Destroy connections to gRPC server on daemon.
+		if _, index, err := fwc.getFimdConnection(hostURL); err == nil {
+			fwc.fimdConnections = append(fwc.fimdConnections[:index], fwc.fimdConnections[index+1:]...)
 		}
 
 		allPods, err := fwc.podLister.List(labels.Everything())
@@ -511,7 +513,11 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 				if err != nil {
 					return err
 				}
-				if err := removeFimdWatcher(hostURL, &pb.FimdConfig{
+				fc, _, err := fwc.getFimdConnection(hostURL)
+				if err != nil {
+					return err
+				}
+				if err := fc.RemoveFimdWatcher(&pb.FimdConfig{
 					NodeName:    pod.Spec.NodeName,
 					ContainerId: cids,
 				}); err != nil {
@@ -729,7 +735,6 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 	// Run this function with a retry, to make sure we get a connection to
 	// the daemon pod. If we exhaust all attempts, process error accordingly.
 	if retryErr := retry.RetryOnConflict(wait.Backoff{
-		// @TODO: re-evaluate these values
 		Steps:    10,
 		Duration: 1 * time.Second,
 		Factor:   2.0,
@@ -783,13 +788,17 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 	// Run this function with a retry, to make sure we get a successful response
 	// from the daemon. If we exhaust all attempts, process error accordingly.
 	if retryErr := retry.RetryOnConflict(wait.Backoff{
-		// @TODO: re-evaluate these values
 		Steps:    10,
 		Duration: 1 * time.Second,
 		Factor:   2.0,
 		Jitter:   0.1,
 	}, func() (err error) {
-		err = addFimdWatcher(hostURL, &pb.FimdConfig{
+		fc, _, err := fwc.getFimdConnection(hostURL)
+		if err != nil {
+			return errorsutil.NewConflict(schema.GroupResource{Resource: "nodes"},
+				nodeName, errors.New("failed to get fimd connection"))
+		}
+		err = fc.AddFimdWatcher(&pb.FimdConfig{
 			NodeName:    nodeName,
 			PodName:     pod.Name,
 			ContainerId: cids,
@@ -875,7 +884,17 @@ func (fwc *FimWatcherController) getFimWatcherSubjects(fw *fimv1alpha1.FimWatche
 	return subjects
 }
 
-// getWatchStates is a helper function that gets all the current watch states
+// getFimdConnection returns a FimdConnection object given a hostURL.
+func (fwc *FimWatcherController) getFimdConnection(hostURL string) (*FimdConnection, int, error) {
+	for i, fc := range fwc.fimdConnections {
+		if fc.hostURL == hostURL {
+			return fc, i, nil
+		}
+	}
+	return nil, -1, fmt.Errorf("could not connect to fimd at hostURL %v", hostURL)
+}
+
+// GetWatchStates is a helper function that gets all the current watch states
 // from every FimD pod running in the clutser. This is used in the syncHandler
 // to run exactly once each sync.
 func (fwc *FimWatcherController) getWatchStates() ([][]*pb.FimdHandle, error) {
@@ -885,7 +904,11 @@ func (fwc *FimWatcherController) getWatchStates() ([][]*pb.FimdHandle, error) {
 	// we assume a single FimD pod in the cluster; get the watch state of this
 	// daemon pod only.
 	if fimdURL != "" {
-		ws, err := getWatchState(fimdURL)
+		fc, _, err := fwc.getFimdConnection(fimdURL)
+		if err != nil {
+			return nil, err
+		}
+		ws, err := fc.GetWatchState()
 		if err != nil {
 			return nil, err
 		}
@@ -908,7 +931,11 @@ func (fwc *FimWatcherController) getWatchStates() ([][]*pb.FimdHandle, error) {
 		if err != nil {
 			continue
 		}
-		ws, err := getWatchState(hostURL)
+		fc, _, err := fwc.getFimdConnection(hostURL)
+		if err != nil {
+			return nil, err
+		}
+		ws, err := fc.GetWatchState()
 		if err != nil {
 			continue
 		}
