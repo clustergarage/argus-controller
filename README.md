@@ -65,3 +65,12 @@ go get -u k8s.io/code-generator/cmd/deepcopy-gen
 # build kube-controller definitions
 ./bin/update-codegen.sh
 ```
+
+## Documentation
+
+```
+# run local godoc server
+godoc -http=":6060"
+
+# navigate to http://localhost:6060/pkg/clustergarage.io
+```

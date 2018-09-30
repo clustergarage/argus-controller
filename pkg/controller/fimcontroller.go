@@ -519,6 +519,7 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 				}
 				if err := fc.RemoveFimdWatcher(&pb.FimdConfig{
 					NodeName:    pod.Spec.NodeName,
+					PodName:     pod.Name,
 					ContainerId: cids,
 				}); err != nil {
 					return err
