@@ -37,7 +37,8 @@ import (
 const (
 	fimcontrollerAgentName = "fim-controller"
 	fimNamespace           = "fim"
-	fimdPort               = 50051
+	fimdService            = "fimd-svc"
+	fimdSvcPortName        = "grpc"
 
 	// FimWatcherAnnotationKey value to annotate a pod being watched by a FimD daemon.
 	FimWatcherAnnotationKey = "clustergarage.io/fim-watcher"
@@ -61,7 +62,8 @@ const (
 
 var (
 	// fimdURL is used to connect to the FimD gRPC server if daemon is out-of-cluster.
-	fimdURL string
+	fimdURL      string
+	fimdSelector = map[string]string{"daemon": "fimd"}
 
 	// updatePodQueue stores a local queue of pod updates that will ensure pods aren't
 	// being updated more than once at a single time. For example: if we get an addPod
@@ -100,6 +102,13 @@ type FimWatcherController struct {
 	// Added as a member to the struct to allow injection for testing.
 	podListerSynced cache.InformerSynced
 
+	// A store of endpoints, populated by the shared informer passed to
+	// NewFimWatcherController.
+	endpointsLister corelisters.EndpointsLister
+	// endpointListerSynced returns true if the endpoints store has been synced at
+	// least once. Added as a member to the struct to allow injection for testing.
+	endpointsListerSynced cache.InformerSynced
+
 	// workqueue is a rate limited work queue. This is used to queue work to be
 	// processed instead of performing it as soon as a change happens. This
 	// means we can ensure we only process a fixed amount of resources at a
@@ -119,7 +128,7 @@ type FimWatcherController struct {
 // NewFimWatcherController returns a new FimWatcher controller.
 func NewFimWatcherController(kubeclientset kubernetes.Interface, fimclientset clientset.Interface,
 	fwInformer informers.FimWatcherInformer, podInformer coreinformers.PodInformer,
-	fimdConnection *FimdConnection) *FimWatcherController {
+	endpointsInformer coreinformers.EndpointsInformer, fimdConnection *FimdConnection) *FimWatcherController {
 
 	// Create event broadcaster.
 	// Add fimcontroller types to the default Kubernetes Scheme so Events can be
@@ -133,16 +142,18 @@ func NewFimWatcherController(kubeclientset kubernetes.Interface, fimclientset cl
 	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: fimcontrollerAgentName})
 
 	fwc := &FimWatcherController{
-		GroupVersionKind: appsv1.SchemeGroupVersion.WithKind("FimWatcher"),
-		kubeclientset:    kubeclientset,
-		fimclientset:     fimclientset,
-		expectations:     controller.NewControllerExpectations(),
-		fwLister:         fwInformer.Lister(),
-		fwListerSynced:   fwInformer.Informer().HasSynced,
-		podLister:        podInformer.Lister(),
-		podListerSynced:  podInformer.Informer().HasSynced,
-		workqueue:        workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "FimWatchers"),
-		recorder:         recorder,
+		GroupVersionKind:      appsv1.SchemeGroupVersion.WithKind("FimWatcher"),
+		kubeclientset:         kubeclientset,
+		fimclientset:          fimclientset,
+		expectations:          controller.NewControllerExpectations(),
+		fwLister:              fwInformer.Lister(),
+		fwListerSynced:        fwInformer.Informer().HasSynced,
+		podLister:             podInformer.Lister(),
+		podListerSynced:       podInformer.Informer().HasSynced,
+		endpointsLister:       endpointsInformer.Lister(),
+		endpointsListerSynced: endpointsInformer.Informer().HasSynced,
+		workqueue:             workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "FimWatchers"),
+		recorder:              recorder,
 	}
 
 	glog.Info("Setting up event handlers")
@@ -189,7 +200,7 @@ func (fwc *FimWatcherController) Run(workers int, stopCh <-chan struct{}) error 
 
 	// Wait for the caches to be synced before starting workers.
 	glog.Info("Waiting for informer caches to sync")
-	if ok := cache.WaitForCacheSync(stopCh, fwc.podListerSynced, fwc.fwListerSynced); !ok {
+	if ok := cache.WaitForCacheSync(stopCh, fwc.podListerSynced, fwc.endpointsListerSynced, fwc.fwListerSynced); !ok {
 		return fmt.Errorf("failed to wait for caches to sync")
 	}
 
@@ -828,10 +839,33 @@ func (fwc *FimWatcherController) getHostURL(pod *corev1.Pod) (string, error) {
 	if fimdURL != "" {
 		return fimdURL, nil
 	}
-	if pod.Status.HostIP == "" {
+
+	if pod.Status.PodIP == "" {
 		return "", fmt.Errorf("cannot locate fimd pod on node %v", pod.Spec.NodeName)
 	}
-	return fmt.Sprintf("%s:%d", pod.Status.HostIP, fimdPort), nil
+	endpoint, err := fwc.endpointsLister.Endpoints(fimNamespace).Get(fimdService)
+	if err != nil {
+		return "", err
+	}
+
+	var epIP string
+	var epPort int32
+	for _, subset := range endpoint.Subsets {
+		for _, addr := range subset.Addresses {
+			if addr.TargetRef.Name == pod.Name {
+				epIP = addr.IP
+			}
+		}
+		for _, port := range subset.Ports {
+			if port.Name == fimdSvcPortName {
+				epPort = port.Port
+			}
+		}
+	}
+	if epIP == "" || epPort == 0 {
+		return "", fmt.Errorf("cannot locate endpoint IP or port on node %v", pod.Spec.NodeName)
+	}
+	return fmt.Sprintf("%s:%d", epIP, epPort), nil
 }
 
 // getHostURLFromSiblingPod constructs a URL from a daemon pod running on the
@@ -844,9 +878,7 @@ func (fwc *FimWatcherController) getHostURLFromSiblingPod(pod *corev1.Pod) (stri
 		return fimdURL, nil
 	}
 
-	selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
-		MatchLabels: map[string]string{"daemon": "fimd"},
-	})
+	selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{MatchLabels: fimdSelector})
 	if err != nil {
 		return "", err
 	}
@@ -917,9 +949,7 @@ func (fwc *FimWatcherController) getWatchStates() ([][]*pb.FimdHandle, error) {
 		return watchStates, nil
 	}
 
-	selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
-		MatchLabels: map[string]string{"daemon": "fimd"},
-	})
+	selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{MatchLabels: fimdSelector})
 	if err != nil {
 		return nil, err
 	}
