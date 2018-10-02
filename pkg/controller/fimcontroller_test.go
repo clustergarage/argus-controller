@@ -88,6 +88,7 @@ func (f *fixture) newController(fimdConnection *FimdConnection) (*FimWatcherCont
 	controller := NewFimWatcherController(f.kubeclient, f.client,
 		fimInformerFactory.Fimcontroller().V1alpha1().FimWatchers(),
 		kubeInformerFactory.Core().V1().Pods(),
+		kubeInformerFactory.Core().V1().Endpoints(),
 		fimdConnection)
 
 	controller.fwListerSynced = alwaysReady
