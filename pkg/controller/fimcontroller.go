@@ -752,6 +752,10 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 		Factor:   2.0,
 		Jitter:   0.1,
 	}, func() (err error) {
+		if pod.DeletionTimestamp != nil {
+			return fmt.Errorf("pod is being deleted %v", pod.Name)
+		}
+
 		// be sure to clear all slice elements first in case it's retrying
 		cids = cids[:0]
 
@@ -805,6 +809,10 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 		Factor:   2.0,
 		Jitter:   0.1,
 	}, func() (err error) {
+		if pod.DeletionTimestamp != nil {
+			return fmt.Errorf("pod is being deleted %v", pod.Name)
+		}
+
 		fc, _, err := fwc.getFimdConnection(hostURL)
 		if err != nil {
 			return errorsutil.NewConflict(schema.GroupResource{Resource: "nodes"},
