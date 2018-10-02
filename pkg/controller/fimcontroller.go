@@ -24,6 +24,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
+	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/controller"
 
 	fimv1alpha1 "clustergarage.io/fim-controller/pkg/apis/fimcontroller/v1alpha1"
@@ -232,7 +233,10 @@ func (fwc *FimWatcherController) updateFimWatcher(old, new interface{}) {
 		}
 		if selectedPods, err := fwc.podLister.Pods(newFW.Namespace).List(selector); err == nil {
 			for _, pod := range selectedPods {
-				go fwc.updatePodOnceValid(pod, newFW)
+				if podutil.IsPodReady(pod) {
+					continue
+				}
+				go fwc.updatePodOnceValid(pod.Name, newFW)
 			}
 		}
 	}
@@ -352,6 +356,11 @@ func (fwc *FimWatcherController) updatePod(old, new interface{}) {
 			fwc.deletePod(oldPod)
 		}
 		return
+	}
+
+	fws := fwc.getPodFimWatchers(newPod)
+	for _, fw := range fws {
+		fwc.enqueueFimWatcher(fw)
 	}
 }
 
@@ -483,7 +492,7 @@ func (fwc *FimWatcherController) processNextWorkItem() bool {
 		// Finally, if no error occurs we Forget this item so it does not
 		// get queued again until another change happens.
 		fwc.workqueue.Forget(obj)
-		glog.Infof("Successfully synced '%s'", key)
+		glog.V(4).Infof("Successfully synced '%s'", key)
 		return nil
 	}(obj)
 
@@ -505,13 +514,11 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 
 	if len(rmPods) > 0 {
 		fwc.expectations.ExpectDeletions(fwKey, len(rmPods))
-		glog.Infof("Too many subjects for %v %s/%s, need %d, deleting %d",
-			fwc.Kind, fw.Namespace, fw.Name, len(fw.Spec.Subjects), len(rmPods))
+		glog.Infof("Too many watchers for %v %s/%s, deleting %d", fwc.Kind, fw.Namespace, fw.Name, len(rmPods))
 	}
 	if len(addPods) > 0 {
 		fwc.expectations.ExpectCreations(fwKey, len(addPods))
-		glog.Infof("Too few subjects for %v %s/%s, need %d, creating %d",
-			fwc.Kind, fw.Namespace, fw.Name, len(fw.Spec.Subjects), len(addPods))
+		glog.Infof("Too few watchers for %v %s/%s, creating %d", fwc.Kind, fw.Namespace, fw.Name, len(addPods))
 	}
 
 	var podsToUpdate []*corev1.Pod
@@ -548,14 +555,15 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 	}
 
 	for _, pod := range addPods {
-		go fwc.updatePodOnceValid(pod, fw)
+		go fwc.updatePodOnceValid(pod.Name, fw)
 
 		err := updateAnnotations(nil, map[string]string{FimWatcherAnnotationKey: fw.Name}, pod)
 		if err != nil {
 			return err
 		}
 		podsToUpdate = append(podsToUpdate, pod)
-		// @TODO: document this
+		// Once updatePodOnceValid is called, put it in an update queue so we
+		// don't start another RetryOnConflict while one is already in effect.
 		updatePodQueue = append(updatePodQueue, pod.Name)
 	}
 
@@ -576,7 +584,7 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 func (fwc *FimWatcherController) syncHandler(key string) error {
 	startTime := time.Now()
 	defer func() {
-		glog.Infof("Finished syncing %v %q (%v)", fwc.Kind, key, time.Since(startTime))
+		glog.V(4).Infof("Finished syncing %v %q (%v)", fwc.Kind, key, time.Since(startTime))
 	}()
 
 	// Convert the namespace/name string into a distinct namespace and name.
@@ -628,9 +636,11 @@ func (fwc *FimWatcherController) syncHandler(key string) error {
 	}
 
 	for _, pod := range selectedPods {
-		wsFound := fwc.isPodInWatchState(pod, watchStates)
-
-		if pod.DeletionTimestamp == nil && !wsFound {
+		if pod.DeletionTimestamp != nil ||
+			!podutil.IsPodReady(pod) {
+			continue
+		}
+		if wsFound := fwc.isPodInWatchState(pod, watchStates); !wsFound {
 			var found bool
 			for _, p := range updatePodQueue {
 				// Check if pod is already in updatePodQueue.
@@ -740,7 +750,7 @@ func (fwc *FimWatcherController) getPodFimWatchers(pod *corev1.Pod) []*fimv1alph
 // gRPC server. Then it retries adding a new FimD watcher by calling the gRPC server
 // CreateWatch function; on success it updates the appropriate FimWatcher annotations
 // so we can mark it now "watched".
-func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1alpha1.FimWatcher) {
+func (fwc *FimWatcherController) updatePodOnceValid(podName string, fw *fimv1alpha1.FimWatcher) {
 	var cids []string
 	var nodeName, hostURL string
 
@@ -752,49 +762,45 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 		Factor:   2.0,
 		Jitter:   0.1,
 	}, func() (err error) {
-		if pod.DeletionTimestamp != nil {
-			return fmt.Errorf("pod is being deleted %v", pod.Name)
-		}
-
 		// be sure to clear all slice elements first in case it's retrying
 		cids = cids[:0]
 
-		po, err := fwc.podLister.Pods(fw.Namespace).Get(pod.Name)
+		pod, err := fwc.podLister.Pods(fw.Namespace).Get(podName)
 		if err != nil {
 			return err
 		}
-		if po.Spec.NodeName == "" || po.Status.HostIP == "" {
+		if pod.Spec.NodeName == "" || pod.Status.HostIP == "" {
 			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
-				po.Name, errors.New("host name/ip not available"))
+				pod.Name, errors.New("host name/ip not available"))
 			return err
 		}
 
-		for _, ctr := range po.Status.ContainerStatuses {
+		for _, ctr := range pod.Status.ContainerStatuses {
 			if ctr.ContainerID == "" {
 				err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
-					po.Name, errors.New("pod container id not available"))
+					pod.Name, errors.New("pod container id not available"))
 				return err
 			}
 			cids = append(cids, ctr.ContainerID)
 		}
-		if len(po.Spec.Containers) != len(cids) {
+		if len(pod.Spec.Containers) != len(cids) {
 			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
-				po.Name, errors.New("available pod container count does not match ready"))
+				pod.Name, errors.New("available pod container count does not match ready"))
 			return err
 		}
 
-		nodeName = po.Spec.NodeName
+		nodeName = pod.Spec.NodeName
 		if nodeName == "" {
 			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
-				po.Name, errors.New("pod node name is not available"))
+				pod.Name, errors.New("pod node name is not available"))
 			return err
 		}
 
 		var hostErr error
-		hostURL, hostErr = fwc.getHostURLFromSiblingPod(po)
+		hostURL, hostErr = fwc.getHostURLFromSiblingPod(pod)
 		if hostErr != nil || hostURL == "" {
 			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
-				po.Name, errors.New("pod host is not available"))
+				pod.Name, errors.New("pod host is not available"))
 		}
 		return err
 	}); retryErr != nil {
@@ -809,6 +815,10 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 		Factor:   2.0,
 		Jitter:   0.1,
 	}, func() (err error) {
+		pod, err := fwc.podLister.Pods(fw.Namespace).Get(podName)
+		if err != nil {
+			return err
+		}
 		if pod.DeletionTimestamp != nil {
 			return fmt.Errorf("pod is being deleted %v", pod.Name)
 		}
@@ -827,14 +837,18 @@ func (fwc *FimWatcherController) updatePodOnceValid(pod *corev1.Pod, fw *fimv1al
 		})
 		return err
 	}); retryErr != nil {
-		updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(pod.Namespace), fwc.podLister,
-			fw.Namespace, pod.Name, func(po *corev1.Pod) error {
+		updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(fw.Namespace), fwc.podLister,
+			fw.Namespace, podName, func(po *corev1.Pod) error {
+				pod, err := fwc.podLister.Pods(fw.Namespace).Get(podName)
+				if err != nil {
+					return err
+				}
 				po.Annotations = pod.Annotations
 				return nil
 			})
 	}
 
-	fwc.removePodFromUpdateQueue(pod.Name)
+	fwc.removePodFromUpdateQueue(podName)
 
 	fwc.recorder.Eventf(fw, corev1.EventTypeNormal, SuccessAdded, MessageResourceAdded, nodeName)
 }
