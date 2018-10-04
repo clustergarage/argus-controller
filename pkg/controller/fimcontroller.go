@@ -536,9 +536,9 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 					return err
 				}
 				if err := fc.RemoveFimdWatcher(&pb.FimdConfig{
-					NodeName:    pod.Spec.NodeName,
-					PodName:     pod.Name,
-					ContainerId: cids,
+					NodeName: pod.Spec.NodeName,
+					PodName:  pod.Name,
+					Pid:      fc.handle.Pid,
 				}); err != nil {
 					return err
 				}
@@ -828,13 +828,15 @@ func (fwc *FimWatcherController) updatePodOnceValid(podName string, fw *fimv1alp
 			return errorsutil.NewConflict(schema.GroupResource{Resource: "nodes"},
 				nodeName, errors.New("failed to get fimd connection"))
 		}
-		err = fc.AddFimdWatcher(&pb.FimdConfig{
-			NodeName:    nodeName,
-			PodName:     pod.Name,
-			ContainerId: cids,
-			Subject:     fwc.getFimWatcherSubjects(fw),
-			LogFormat:   fw.Spec.LogFormat,
-		})
+		if handle, err := fc.AddFimdWatcher(&pb.FimdConfig{
+			NodeName:  nodeName,
+			PodName:   pod.Name,
+			Cid:       cids,
+			Subject:   fwc.getFimWatcherSubjects(fw),
+			LogFormat: fw.Spec.LogFormat,
+		}); err == nil {
+			fc.handle = handle
+		}
 		return err
 	}); retryErr != nil {
 		updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(fw.Namespace), fwc.podLister,

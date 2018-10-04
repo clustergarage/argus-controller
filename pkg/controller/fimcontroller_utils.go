@@ -28,6 +28,7 @@ import (
 // current state of the daemon to keep the controller<-->daemon in sync.
 type FimdConnection struct {
 	hostURL string
+	handle  *pb.FimdHandle
 	client  pb.FimdClient
 }
 
@@ -47,21 +48,20 @@ func NewFimdConnection(hostURL string, client ...pb.FimdClient) *FimdConnection 
 }
 
 // AddFimdWatcher sends a message to the FimD daemon to create a new watcher.
-func (fc *FimdConnection) AddFimdWatcher(config *pb.FimdConfig) error {
+func (fc *FimdConnection) AddFimdWatcher(config *pb.FimdConfig) (*pb.FimdHandle, error) {
 	glog.Infof("Sending CreateWatch call to FimD daemon, host: %s, request: %#v)", fc.hostURL, config)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	defer ctx.Done()
 
-	var response *pb.FimdHandle
 	response, err := fc.client.CreateWatch(ctx, config)
 	glog.Infof("Received CreateWatch response: %#v", response)
 	if err != nil || response.NodeName == "" {
-		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
+		return nil, errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
 			config.NodeName, errors.New("fimd::CreateWatch failed"))
 	}
-	return nil
+	return response, nil
 }
 
 // RemoveFimdWatcher sends a message to the FimD daemon to remove an existing
