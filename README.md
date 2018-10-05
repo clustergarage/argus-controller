@@ -43,7 +43,7 @@ go test pkg/controller/*
 # run with code coverage
 go test -cover -coverprofile coverage/out pkg/controller/*
 # parse code coverage into html
-go tool cover -html=coverage/out
+go tool cover -html coverage/out
 ```
 
 ## Verifying Code
@@ -70,7 +70,7 @@ go get -u k8s.io/code-generator/cmd/deepcopy-gen
 
 ```
 # run local godoc server
-godoc -http=":6060"
+godoc -http ":6060"
 
 # navigate to http://localhost:6060/pkg/clustergarage.io
 ```

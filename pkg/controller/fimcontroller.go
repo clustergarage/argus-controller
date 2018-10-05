@@ -863,6 +863,7 @@ func (fwc *FimWatcherController) getHostURL(pod *corev1.Pod) (string, error) {
 	if fimdURL != "" {
 		return fimdURL, nil
 	}
+
 	if pod.Status.PodIP == "" {
 		return "", fmt.Errorf("cannot locate fimd pod on node %v", pod.Spec.NodeName)
 	}
@@ -906,7 +907,6 @@ func (fwc *FimWatcherController) getHostURLFromSiblingPod(pod *corev1.Pod) (stri
 	if err != nil {
 		return "", err
 	}
-
 	daemonPods, err := fwc.podLister.Pods(fimNamespace).List(selector)
 	if err != nil {
 		return "", err
