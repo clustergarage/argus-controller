@@ -127,10 +127,11 @@ func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1al
 // calculateStatus creates a new status from a given FimWatcher and filteredPods array.
 func calculateStatus(fw *fimv1alpha1.FimWatcher, filteredPods []*corev1.Pod, manageFimWatchersErr error) fimv1alpha1.FimWatcherStatus {
 	newStatus := fw.Status
+	// @TODO: document this
 	// Count the number of pods that have labels matching the labels of the pod
-	// template of the replica set, the matching pods may have more
+	// template of the fim watcher, the matching pods may have more
 	// labels than are in the template. Because the label of podTemplateSpec is
-	// a superset of the selector of the replica set, so the possible
+	// a superset of the selector of the fim watcher, so the possible
 	// matching pods must be part of the filteredPods.
 	observablePodsCount := 0
 	for _, pod := range filteredPods {
@@ -138,6 +139,7 @@ func calculateStatus(fw *fimv1alpha1.FimWatcher, filteredPods []*corev1.Pod, man
 			observablePodsCount++
 		}
 	}
+	// @FIXME
 	newStatus.ObservablePods = int32(observablePodsCount) //int32(observablePodsCount*len(fw.Spec.Subjects))
 	return newStatus
 }

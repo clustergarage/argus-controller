@@ -86,6 +86,8 @@ type FimWatcherController struct {
 	// fimclientset is a clientset for our own API group.
 	fimclientset clientset.Interface
 
+	// Allow injection of syncFimWatcher.
+	syncHandler func(key string) error
 	// A TTLCache of pod creates/deletes each fw expects to see.
 	expectations controller.ControllerExpectationsInterface
 
@@ -176,6 +178,8 @@ func NewFimWatcherController(kubeclientset kubernetes.Interface, fimclientset cl
 		DeleteFunc: fwc.deletePod,
 	})
 
+	fwc.syncHandler = fwc.syncFimWatcher
+
 	// If specifying a fimdConnection for a daemon that is located out-of-cluster,
 	// initialize the fimd connection here, because we will not receive an addPod
 	// event where it is normally initialized.
@@ -233,7 +237,7 @@ func (fwc *FimWatcherController) updateFimWatcher(old, new interface{}) {
 		}
 		if selectedPods, err := fwc.podLister.Pods(newFW.Namespace).List(selector); err == nil {
 			for _, pod := range selectedPods {
-				if podutil.IsPodReady(pod) {
+				if !podutil.IsPodReady(pod) {
 					continue
 				}
 				go fwc.updatePodOnceValid(pod.Name, newFW)
@@ -241,7 +245,7 @@ func (fwc *FimWatcherController) updateFimWatcher(old, new interface{}) {
 		}
 	}
 
-	fwc.enqueueFimWatcher(new)
+	fwc.enqueueFimWatcher(newFW)
 }
 
 // addPod is called when a pod is created, enqueue the FimWatcher that manages
@@ -578,10 +582,10 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 	return nil
 }
 
-// syncHandler compares the actual state with the desired, and attempts to
+// syncFimWatcher compares the actual state with the desired, and attempts to
 // converge the two. It then updates the Status block of the FimWatcher resource
 // with the current status of the resource.
-func (fwc *FimWatcherController) syncHandler(key string) error {
+func (fwc *FimWatcherController) syncFimWatcher(key string) error {
 	startTime := time.Now()
 	defer func() {
 		glog.V(4).Infof("Finished syncing %v %q (%v)", fwc.Kind, key, time.Since(startTime))
@@ -725,10 +729,10 @@ func (fwc *FimWatcherController) getPodFimWatchers(pod *corev1.Pod) []*fimv1alph
 			runtime.HandleError(fmt.Errorf("invalid selector: %v", err))
 			return nil
 		}
-
 		// If a FimWatcher with a nil or empty selector creeps in, it should
 		// match nothing, not everything.
-		if selector.Empty() || !selector.Matches(labels.Set(pod.Labels)) {
+		if selector.Empty() ||
+			!selector.Matches(labels.Set(pod.Labels)) {
 			continue
 		}
 		fws = append(fws, fw)
