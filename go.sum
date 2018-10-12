@@ -186,6 +186,8 @@ k8s.io/client-go v0.0.0-20180624190844-615dfd3eb0c3 h1:DjmiPfKJI8Nzw3tg1a3DjQwFn
 k8s.io/client-go v0.0.0-20180624190844-615dfd3eb0c3/go.mod h1:7vJpHMYJwNQCWgzmNV+VYUl1zCObLyodBc8nIyt8L5s=
 k8s.io/code-generator v0.0.0-20180925131323-731fd6119048 h1:04MFlEzqJoC++p6ISwn8OsctV5kadONwYzw99PZxHVI=
 k8s.io/code-generator v0.0.0-20180925131323-731fd6119048/go.mod h1:MYiN+ZJZ9HkETbgVZdWw2AsuAi9PZ4V80cwfuf2axe8=
+k8s.io/code-generator v0.0.0-20181011064410-6a2840f5b572 h1:CiUNntTPnpGiNBKmlpNx7eb6NE/NCtPaauR02rYiePU=
+k8s.io/code-generator v0.0.0-20181011064410-6a2840f5b572/go.mod h1:MYiN+ZJZ9HkETbgVZdWw2AsuAi9PZ4V80cwfuf2axe8=
 k8s.io/gengo v0.0.0-20180813235010-4242d8e6c5db h1:y4HMdfOwlsozieNWeY0dObS35YwUn3pVq3KlfOclwGI=
 k8s.io/gengo v0.0.0-20180813235010-4242d8e6c5db/go.mod h1:ezvh/TsK7cY6rbqRK0oQQ8IAqLxYwwyPxAX1Pzy0ii0=
 k8s.io/kube-openapi v0.0.0-20180711000925-0cf8f7e6ed1d h1:mn2F9UzCk6KGa7M/d2ibLyRtBQm7n6QvbCjDe/cDWSg=

@@ -73,7 +73,7 @@ require (
 	k8s.io/apimachinery v0.0.0-20180624185650-1c56055d3f2f
 	k8s.io/apiserver v0.0.0-20180626074217-e9e4beec4b15 // indirect
 	k8s.io/client-go v0.0.0-20180624190844-615dfd3eb0c3
-	k8s.io/code-generator v0.0.0-20180925131323-731fd6119048 // indirect
+	k8s.io/code-generator v0.0.0-20181011064410-6a2840f5b572 // indirect
 	k8s.io/gengo v0.0.0-20180813235010-4242d8e6c5db // indirect
 	k8s.io/kube-openapi v0.0.0-20180711000925-0cf8f7e6ed1d // indirect
 	k8s.io/kubernetes v0.0.0-20180627003308-05f073dc28b4
