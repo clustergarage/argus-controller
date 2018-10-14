@@ -6,7 +6,7 @@ This repository implements a Kubernetes controller for watching FimWatcher
 resources as defined with a CustomResourceDefinition.
 
 **Note**: `go get` or `go mod` this package as
-`clustergarage.io/fim-controller`
+`go get clustergarage.io/fim-controller`
 
 It leverages the Kubernetes [client-go
 library](https://github.com/kubernetes/client-go/tree/master/tools/cache)
@@ -19,7 +19,7 @@ This controller is used primarily to communicate between a running cluster and
 the [fimd](https://github.com/clustergarage/fimd) daemons running alongside it.
 
 Included within the controller are some mechanisms to speak to the Kubernetes
-API and the daemons:
+API and the daemons to:
 
 - Gain insights into pods, endpoints, and custom FimWatcher CRDs being added,
   updated, and deleted.
@@ -41,6 +41,8 @@ export GO111MODULE=on
 ```
 
 ### Cloning
+
+**Note**: The GOPATH environment variable specifies the location of your workspace. If no GOPATH is set, it is assumed to be $HOME/go on Unix systems and %USERPROFILE%\go on Windows. If you want to use a custom location as your workspace, you can set the GOPATH environment variable.
 
 ```
 mkdir -p $GOPATH/src/clustergarage.io && cd $_
@@ -190,7 +192,7 @@ directories:
 - `pkg/client/`
 
 Changes should not be made manually to these files. When updating the
-definitions of `pkg/apis/fimcontroller/*` you just need to re-run the
+definitions of `pkg/apis/fimcontroller/*` you should re-run the
 `update-codegen` script to regenerate the files listed above.
 
 ## Cleanup
