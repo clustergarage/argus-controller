@@ -89,7 +89,7 @@ type FimWatcherController struct {
 	// Allow injection of syncFimWatcher.
 	syncHandler func(key string) error
 	// A TTLCache of pod creates/deletes each fw expects to see.
-	expectations controller.ControllerExpectationsInterface
+	expectations *controller.UIDTrackingControllerExpectations
 
 	// A store of FimWatchers, populated by the shared informer passed to
 	// NewFimWatcherController.
@@ -148,7 +148,7 @@ func NewFimWatcherController(kubeclientset kubernetes.Interface, fimclientset cl
 		GroupVersionKind:      appsv1.SchemeGroupVersion.WithKind("FimWatcher"),
 		kubeclientset:         kubeclientset,
 		fimclientset:          fimclientset,
-		expectations:          controller.NewControllerExpectations(),
+		expectations:          controller.NewUIDTrackingControllerExpectations(controller.NewControllerExpectations()),
 		fwLister:              fwInformer.Lister(),
 		fwListerSynced:        fwInformer.Informer().HasSynced,
 		podLister:             podInformer.Lister(),
@@ -307,7 +307,6 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 				continue
 			}
 
-			//updateAnnotations([]string{FimWatcherAnnotationKey}, nil, po)
 			glog.V(4).Infof("Unannotated pod %s found: %#v.", po.Name, po)
 			for _, fw := range fws {
 				fwc.enqueueFimWatcher(fw)
@@ -316,9 +315,8 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 		return
 	}
 
-	// Get a list of all matching FimWatchers and sync them to see if anyone
-	// wants to adopt it do not observe creation because no controller should
-	// be waiting for an orphan.
+	// Get a list of all matching FimWatchers and sync them. Do not observe
+	// creation because no controller should be waiting for an orphan.
 	fws := fwc.getPodFimWatchers(pod)
 	if len(fws) == 0 {
 		return
@@ -402,7 +400,7 @@ func (fwc *FimWatcherController) deletePod(obj interface{}) {
 		}
 		glog.V(4).Infof("Annotated pod %s/%s deleted through %v, timestamp %+v: %#v.",
 			pod.Namespace, pod.Name, runtime.GetCaller(), pod.DeletionTimestamp, pod)
-		fwc.expectations.DeletionObserved(fwKey)
+		fwc.expectations.DeletionObserved(fwKey, controller.PodKey(pod))
 		fwc.enqueueFimWatcher(fw)
 	}
 
@@ -517,7 +515,7 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 	}
 
 	if len(rmPods) > 0 {
-		fwc.expectations.ExpectDeletions(fwKey, len(rmPods))
+		fwc.expectations.ExpectDeletions(fwKey, getPodKeys(rmPods))
 		glog.Infof("Too many watchers for %v %s/%s, deleting %d", fwc.Kind, fw.Namespace, fw.Name, len(rmPods))
 	}
 	if len(addPods) > 0 {
@@ -748,6 +746,15 @@ func (fwc *FimWatcherController) getPodFimWatchers(pod *corev1.Pod) []*fimv1alph
 		runtime.HandleError(fmt.Errorf("user error; more than one %v is selecting pods with labels: %+v", fwc.Kind, pod.Labels))
 	}
 	return fws
+}
+
+// getPodKeys returns a list of pod key strings from array of pod objects.
+func getPodKeys(pods []*corev1.Pod) []string {
+	podKeys := make([]string, 0, len(pods))
+	for _, pod := range pods {
+		podKeys = append(podKeys, controller.PodKey(pod))
+	}
+	return podKeys
 }
 
 // updatePodOnceValid first retries getting the pod hostURL to connect to the FimD
