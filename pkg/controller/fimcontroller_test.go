@@ -1,10 +1,10 @@
 package fimcontroller
 
 import (
-	//"errors"
+	"errors"
 	"fmt"
 	"io"
-	//"math/rand"
+	"math/rand"
 	//"net/http/httptest"
 	//"net/url"
 	"reflect"
@@ -34,7 +34,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	//utiltesting "k8s.io/client-go/util/testing"
-	//"k8s.io/client-go/util/workqueue"
+	"k8s.io/client-go/util/workqueue"
 	"k8s.io/kubernetes/pkg/controller"
 	. "k8s.io/kubernetes/pkg/controller/testutil"
 	//"k8s.io/kubernetes/pkg/securitycontext"
@@ -110,13 +110,13 @@ func (f *fixture) newFimWatcherController(kubeclient clientset.Interface, client
 	fimdConnection *FimdConnection) *FimWatcherController {
 
 	if kubeclient == nil {
-		f.kubeclient = kubefake.NewSimpleClientset(f.kubeobjects...)
-		kubeclient = f.kubeclient
+		kubeclient = kubefake.NewSimpleClientset(f.kubeobjects...)
 	}
+	f.kubeclient = kubeclient.(*kubefake.Clientset)
 	if client == nil {
-		f.client = fake.NewSimpleClientset(f.objects...)
-		client = f.client
+		client = fake.NewSimpleClientset(f.objects...)
 	}
+	f.client = client.(*fake.Clientset)
 
 	f.kubeinformers = kubeinformers.NewSharedInformerFactory(kubeclient, controller.NoResyncPeriodFunc())
 	f.fiminformers = informers.NewSharedInformerFactory(client, controller.NoResyncPeriodFunc())
@@ -157,24 +157,17 @@ func (f *fixture) updateInformers() {
 	f.fiminformers.Fimcontroller().V1alpha1().FimWatchers().Informer().GetIndexer().Replace(items, "")
 }
 
-/*
-func (f *fixture) resetActions() {
-	f.actions = f.actions[:0]
-	f.kubeactions = f.kubeactions[:0]
-}
-
-func skipListerFn(verb string, url url.URL) bool {
-	if verb != "GET" {
-		return false
-	}
-	if strings.HasSuffix(url.Path, "/pods") ||
-		strings.HasSuffix(url.Path, "/endpoints") ||
-		strings.Contains(url.Path, "/fimwatchers") {
-		return true
-	}
-	return false
-}
-*/
+//func skipListerFn(verb string, url url.URL) bool {
+//	if verb != "GET" {
+//		return false
+//	}
+//	if strings.HasSuffix(url.Path, "/pods") ||
+//		strings.HasSuffix(url.Path, "/endpoints") ||
+//		strings.Contains(url.Path, "/fimwatchers") {
+//		return true
+//	}
+//	return false
+//}
 
 func newFimWatcher(name string, selectorMap map[string]string) *fimv1alpha1.FimWatcher {
 	return &fimv1alpha1.FimWatcher{
@@ -230,11 +223,11 @@ func newPod(name string, fw *fimv1alpha1.FimWatcher, status corev1.PodPhase, mat
 }
 
 func newPodList(name string, fw *fimv1alpha1.FimWatcher, store cache.Store, count int, status corev1.PodPhase,
-	labelMap map[string]string) *corev1.PodList {
+	labelMap map[string]string, fwWatched bool) *corev1.PodList {
 
 	pods := []corev1.Pod{}
 	for i := 0; i < count; i++ {
-		pod := newPod(fmt.Sprintf("%s%d", name, i), fw, status, false, false)
+		pod := newPod(fmt.Sprintf("%s%d", name, i), fw, status, false, fwWatched)
 		pod.ObjectMeta.Labels = labelMap
 		if store != nil {
 			store.Add(pod)
@@ -278,9 +271,9 @@ func newEndpoint(name string, pod *corev1.Pod) *corev1.Endpoints {
 	}
 }
 
-func mockGetWatchState(ctrl *gomock.Controller, handle *pb.FimdHandle) *FimdConnection {
+func stubGetWatchState(ctrl *gomock.Controller, ret *pb.FimdHandle) *FimdConnection {
 	stream := pbmock.NewMockFimd_GetWatchStateClient(ctrl)
-	stream.EXPECT().Recv().Return(handle, nil)
+	stream.EXPECT().Recv().Return(ret, nil)
 	stream.EXPECT().Recv().Return(nil, io.EOF)
 	client := pbmock.NewMockFimdClient(ctrl)
 	client.EXPECT().GetWatchState(gomock.Any(), gomock.Any()).Return(stream, nil)
@@ -295,6 +288,14 @@ func (f *fixture) runController(fwc *FimWatcherController, fwKey string, expectE
 		f.t.Error("expected error syncing fw, got nil")
 	}
 
+	f.verifyActions()
+	if f.kubeclient == nil {
+		return
+	}
+	f.verifyKubeActions()
+}
+
+func (f *fixture) verifyActions() {
 	actions := filterInformerActions(f.client.Actions())
 	for i, action := range actions {
 		if len(f.actions) < i+1 {
@@ -307,10 +308,9 @@ func (f *fixture) runController(fwc *FimWatcherController, fwKey string, expectE
 	if len(f.actions) > len(actions) {
 		f.t.Errorf("%d additional expected actions:%+v", len(f.actions)-len(actions), f.actions[len(actions):])
 	}
+}
 
-	if f.kubeclient == nil {
-		return
-	}
+func (f *fixture) verifyKubeActions() {
 	kubeactions := filterInformerActions(f.kubeclient.Actions())
 	for i, action := range kubeactions {
 		if len(f.kubeactions) < i+1 {
@@ -419,19 +419,35 @@ func (f *fixture) expectUpdateFimWatcherStatusAction(fw *fimv1alpha1.FimWatcher)
 
 func (f *fixture) expectCreateFimWatcherAction(fw *fimv1alpha1.FimWatcher) {
 	f.actions = append(f.actions, core.NewCreateAction(schema.GroupVersionResource{
+		Group:    fwGroup,
 		Resource: fwResource,
+		Version:  fwVersion,
 	}, fw.Namespace, fw))
 }
 
-func (f *fixture) expectUpdateFimWatcherAction(fw *fimv1alpha1.FimWatcher) {
-	f.actions = append(f.actions, core.NewUpdateAction(schema.GroupVersionResource{
+func (f *fixture) expectGetFimWatcherAction(fw *fimv1alpha1.FimWatcher) {
+	f.actions = append(f.actions, core.NewGetAction(schema.GroupVersionResource{
+		Group:    fwGroup,
 		Resource: fwResource,
-	}, fw.Namespace, fw))
+		Version:  fwVersion,
+	}, fw.Namespace, fw.Name))
+}
+
+func (f *fixture) expectUpdateFimWatcherAction(fw *fimv1alpha1.FimWatcher) {
+	action := core.NewUpdateAction(schema.GroupVersionResource{
+		Group:    fwGroup,
+		Resource: fwResource,
+		Version:  fwVersion,
+	}, fw.Namespace, fw)
+	action.Subresource = "status"
+	f.actions = append(f.actions, action)
 }
 
 func (f *fixture) expectDeleteFimWatcherAction(fw *fimv1alpha1.FimWatcher) {
 	f.actions = append(f.actions, core.NewDeleteAction(schema.GroupVersionResource{
+		Group:    fwGroup,
 		Resource: fwResource,
+		Version:  fwVersion,
 	}, fw.Namespace, fw.Name))
 }
 
@@ -440,6 +456,28 @@ func (f *fixture) expectUpdatePodAction(pod *corev1.Pod) {
 		Version:  podVersion,
 		Resource: podResource,
 	}, pod.Namespace, pod))
+}
+
+type FakeFWExpectations struct {
+	*controller.ControllerExpectations
+	satisfied    bool
+	expSatisfied func()
+}
+
+func (fe FakeFWExpectations) SatisfiedExpectations(controllerKey string) bool {
+	fe.expSatisfied()
+	return fe.satisfied
+}
+
+// shuffle returns a new shuffled list of container controllers.
+func shuffle(controllers []*fimv1alpha1.FimWatcher) []*fimv1alpha1.FimWatcher {
+	numControllers := len(controllers)
+	randIndexes := rand.Perm(numControllers)
+	shuffled := make([]*fimv1alpha1.FimWatcher, numControllers)
+	for i := 0; i < numControllers; i++ {
+		shuffled[i] = controllers[randIndexes[i]]
+	}
+	return shuffled
 }
 
 func TestSyncFimWatcherDoesNothing(t *testing.T) {
@@ -467,7 +505,7 @@ func TestLocalFimdConnection(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	fc := mockGetWatchState(ctrl, &pb.FimdHandle{})
+	fc := stubGetWatchState(ctrl, &pb.FimdHandle{})
 	fwc := f.newFimWatcherController(nil, nil, fc)
 
 	f.expectUpdateFimWatcherStatusAction(fw)
@@ -516,7 +554,7 @@ func TestWatchControllers(t *testing.T) {
 	}
 }
 
-// updateFimWatcher
+// @TODO: updateFimWatcher
 
 func TestWatchPods(t *testing.T) {
 	f := newFixture(t)
@@ -541,7 +579,7 @@ func TestWatchPods(t *testing.T) {
 	go f.kubeinformers.Core().V1().Pods().Informer().Run(stopCh)
 	go fwc.Run(1, stopCh)
 
-	pods := newPodList("bar", fw, nil, 1, corev1.PodRunning, fwMatchedLabel)
+	pods := newPodList("bar", fw, nil, 1, corev1.PodRunning, fwMatchedLabel, false)
 	pod := pods.Items[0]
 	pod.Status.Phase = corev1.PodFailed
 	fakeWatch.Add(&pod)
@@ -660,7 +698,7 @@ func TestUpdatePods(t *testing.T) {
 	// case 1: Pod without FimD watcher and new ResourceVersion should enqueue
 	// update.
 	pod1 := newPodList("bar", fw1, f.kubeinformers.Core().V1().Pods().Informer().GetIndexer(),
-		1, corev1.PodRunning, fwMatchedLabel).Items[0]
+		1, corev1.PodRunning, fwMatchedLabel, false).Items[0]
 	pod1.ResourceVersion = "1"
 	pod2 := pod1
 	pod2.Labels = fwNonMatchedLabel
@@ -692,28 +730,6 @@ func TestUpdatePods(t *testing.T) {
 	case got := <-received:
 		t.Errorf("Not expecting update for %v", got)
 	case <-time.After(time.Millisecond):
-	}
-
-	// case 3: Pod with FimD watcher, DeletionTimestamp, different labels should
-	// call deletePod on both old,new pods and enqueue update.
-	pod1 = *newPod("bar", fw1, corev1.PodRunning, true, true)
-	pod1.ResourceVersion = "1"
-	pod2 = pod1
-	pod2.ResourceVersion = "2"
-	pod2.Labels = fwNonMatchedLabel
-	pod2.DeletionTimestamp = &metav1.Time{Time: time.Now()}
-	fwc.updatePod(&pod1, &pod2)
-	expected = sets.NewString(fw1.Name)
-	for _, name := range expected.List() {
-		t.Logf("Expecting update for %+v", name)
-		select {
-		case got := <-received:
-			if !expected.Has(got) {
-				t.Errorf("Expected keys %#v got %v", expected, got)
-			}
-		case <-time.After(wait.ForeverTestTimeout):
-			t.Errorf("Expected update notifications for fim watchers")
-		}
 	}
 }
 
@@ -787,75 +803,13 @@ func TestDeleteFinalStateUnknown(t *testing.T) {
 	}
 }
 
-/*
-func TestSyncFimWatcherDormancy(t *testing.T) {
-	f := newFixture(t)
-	fw := newFimWatcher("foo", fwMatchedLabel)
-	pod := newPod("bar", fw, corev1.PodRunning, true, false)
-
-	// Setup a test server so we can lie about the current state of pods
-	fakeHandler := utiltesting.FakeHandler{
-		StatusCode:    200,
-		ResponseBody:  "{}",
-		SkipRequestFn: skipListerFn,
-		T:             t,
-	}
-	testServer := httptest.NewServer(&fakeHandler)
-	defer testServer.Close()
-
-	f.fwLister = append(f.fwLister, fw)
-	f.objects = append(f.objects, fw)
-	fwc := f.newFimWatcherController(clientset.NewForConfigOrDie(&restclient.Config{
-		Host: testServer.URL,
-		ContentConfig: restclient.ContentConfig{
-			GroupVersion: &schema.GroupVersion{
-				Group:   "",
-				Version: "v1",
-			},
-		},
-	}), nil)
-
-	// Creates a fimwatch and sets expectations
-	fw.Status.ObservablePods = 1
-	f.podLister = append(f.podLister, pod)
-	f.kubeobjects = append(f.kubeobjects, pod)
-	f.updateInformers()
-	f.expectUpdateFimWatcherStatusAction(fw)
-	f.runController(fwc, GetKey(fw, t), false)
-	f.resetActions()
-
-	// Expectations prevents watchers but not an update on status
-	fw.Status.ObservablePods = 1
-	f.podLister = f.podLister[:0]
-	f.kubeobjects = f.kubeobjects[:0]
-	f.updateInformers()
-	f.expectUpdateFimWatcherStatusAction(fw)
-	f.runController(fwc, GetKey(fw, t), false)
-	f.resetActions()
-
-	//// Get the key for the controller
-	//fwKey, err := controller.KeyFunc(fw)
-	//if err != nil {
-	//	t.Errorf("Couldn't get key for object %#v: %v", fw, err)
-	//}
-	//// Lowering expectations should lead to a sync that creates a replica, however the
-	//// fakePodControl error will prevent this, leaving expectations at 0, 0
-	//fwc.expectations.CreationObserved(fwKey)
-	//f.podLister = append(f.podLister, pod)
-	//f.kubeobjects = append(f.kubeobjects, pod)
-	//f.updateInformers()
-	//f.expectUpdateFimWatcherStatusAction(fw)
-	//f.runController(fwc, GetKey(fw, t), false)
-
-	// 2 PUT for the FimWatch status during dormancy window.
-	fakeHandler.ValidateRequestCount(t, 1)
-}
-*/
-
-/*
 func TestControllerUpdateRequeue(t *testing.T) {
 	f := newFixture(t)
-	client := fake.NewSimpleClientset()
+	fw := newFimWatcher("foo", fwMatchedLabel)
+	fw.Status = fimv1alpha1.FimWatcherStatus{ObservablePods: 2}
+	f.fwLister = append(f.fwLister, fw)
+	f.objects = append(f.objects, fw)
+	client := fake.NewSimpleClientset(f.objects...)
 	client.PrependReactor("update", "fimwatchers", func(action core.Action) (bool, runtime.Object, error) {
 		if action.GetSubresource() != "status" {
 			return false, nil, nil
@@ -864,11 +818,10 @@ func TestControllerUpdateRequeue(t *testing.T) {
 	})
 	fwc := f.newFimWatcherController(nil, client, nil)
 
-	// This server should force a requeue of the controller because it fails to update status.Replicas.
-	fw := newFimWatcher("foo", fwMatchedLabel)
-	f.fiminformers.Fimcontroller().V1alpha1().FimWatchers().Informer().GetIndexer().Add(fw)
-	fw.Status = fimv1alpha1.FimWatcherStatus{ObservablePods: 2}
-	newPodList("bar", fw, f.kubeinformers.Core().V1().Pods().Informer().GetIndexer(), 1, corev1.PodRunning, fwMatchedLabel)
+	// This server should force a requeue of the controller because it fails to
+	// update status.ObservablePods.
+	newPodList("bar", fw, f.kubeinformers.Core().V1().Pods().Informer().GetIndexer(),
+		1, corev1.PodRunning, fwMatchedLabel, false)
 
 	// Enqueue once. Then process it. Disable rate-limiting for this.
 	fwc.workqueue = workqueue.NewRateLimitingQueue(workqueue.NewMaxOfRateLimiter())
@@ -879,72 +832,33 @@ func TestControllerUpdateRequeue(t *testing.T) {
 		t.Errorf("queue.Len() = %v, want %v", got, want)
 	}
 }
-*/
 
-/*
 func TestControllerUpdateStatusWithFailure(t *testing.T) {
-	//f := newFixture(t)
-	client := fake.NewSimpleClientset()
-	fw := newFimWatcher("foo", map[string]string{"foo": "bar"})
-	client.AddReactor("get", "fimwatchers", func(action core.Action) (bool, runtime.Object, error) {
+	f := newFixture(t)
+	fw := newFimWatcher("foo", fwMatchedLabel)
+	f.fwLister = append(f.fwLister, fw)
+	f.objects = append(f.objects, fw)
+	client := fake.NewSimpleClientset(f.objects...)
+	client.PrependReactor("get", "fimwatchers", func(action core.Action) (bool, runtime.Object, error) {
 		return true, fw, nil
 	})
-	client.AddReactor("*", "*", func(action core.Action) (bool, runtime.Object, error) {
+	client.PrependReactor("*", "*", func(action core.Action) (bool, runtime.Object, error) {
 		return true, &fimv1alpha1.FimWatcher{}, fmt.Errorf("Fake error")
 	})
-	//fwc := f.newFimWatcherController(nil, client, nil)
+	f.newFimWatcherController(nil, client, nil)
 
-	fakeFWClient := client.FimcontrollerV1alpha1().FimWatchers("foo")
 	numObservablePods := int32(10)
-	newStatus := fimv1alpha1.FimWatcherStatus{ObservablePods: numObservablePods}
-	updateFimWatcherStatus(fakeFWClient, fw, newStatus)
-	updates, gets := 0, 0
-	for _, a := range client.Actions() {
-		if a.GetResource().Resource != "fimwatchers" {
-			t.Errorf("Unexpected action %+v", a)
-			continue
-		}
+	expectedFW := fw.DeepCopy()
+	expectedFW.Status.ObservablePods = numObservablePods
+	f.expectUpdateFimWatcherAction(expectedFW)
+	f.expectGetFimWatcherAction(expectedFW)
 
-		switch action := a.(type) {
-		case core.GetAction:
-			gets++
-			// Make sure the get is for the right FimWatcher even though the update failed.
-			if action.GetName() != fw.Name {
-				t.Errorf("Expected get for FimWatcher %v, got %+v instead", fw.Name, action.GetName())
-			}
-		case core.UpdateAction:
-			updates++
-			// Confirm that the update has the right status.Replicas even though the Get
-			// returned a FimWatcher with replicas=1.
-			if c, ok := action.GetObject().(*fimv1alpha1.FimWatcher); !ok {
-				t.Errorf("Expected a FimWatcher as the argument to update, got %T", c)
-			} else if c.Status.ObservablePods != numObservablePods {
-				t.Errorf("Expected update for FimWatcher to contain observable pods %v, got %v instead",
-					numObservablePods, c.Status.ObservablePods)
-			}
-		default:
-			t.Errorf("Unexpected action %+v", a)
-			break
-		}
-	}
-	if gets != 1 || updates != 2 {
-		t.Errorf("Expected 1 get and 2 updates, got %d gets %d updates", gets, updates)
-	}
+	newStatus := fimv1alpha1.FimWatcherStatus{ObservablePods: numObservablePods}
+	updateFimWatcherStatus(f.client.FimcontrollerV1alpha1().FimWatchers(fw.Namespace), fw, newStatus)
+	f.verifyActions()
 }
-*/
 
 /*
-type FakeFWExpectations struct {
-	*controller.ControllerExpectations
-	satisfied    bool
-	expSatisfied func()
-}
-
-func (fe FakeFWExpectations) SatisfiedExpectations(controllerKey string) bool {
-	fe.expSatisfied()
-	return fe.satisfied
-}
-
 // TestFWSyncExpectations tests that a pod cannot sneak in between counting active pods
 // and checking expectations.
 func TestFWSyncExpectations(t *testing.T) {
@@ -953,14 +867,14 @@ func TestFWSyncExpectations(t *testing.T) {
 
 	fw := newFimWatcher("foo", fwMatchedLabel)
 	f.fiminformers.Fimcontroller().V1alpha1().FimWatchers().Informer().GetIndexer().Add(fw)
-	pods := newPodList("bar", fw, nil, 2, corev1.PodPending, fwMatchedLabel)
+	pods := newPodList("bar", fw, nil, 2, corev1.PodPending, fwMatchedLabel, false)
 	f.kubeinformers.Core().V1().Pods().Informer().GetIndexer().Add(&pods.Items[0])
 	postExpectationsPod := pods.Items[1]
 
 	fwc.expectations = controller.NewUIDTrackingControllerExpectations(FakeFWExpectations{
 		controller.NewControllerExpectations(), true, func() {
 			// If we check active pods before checking expectataions, the
-			// FimWatcher will create a new replica because it doesn't see
+			// FimWatcher will create a new watcher because it doesn't see
 			// this pod, but has fulfilled its expectations.
 			f.kubeinformers.Core().V1().Pods().Informer().GetIndexer().Add(&postExpectationsPod)
 		},
@@ -1015,25 +929,24 @@ func TestDeleteControllerAndExpectations(t *testing.T) {
 }
 */
 
-/*
 func TestDeletionTimestamp(t *testing.T) {
 	f := newFixture(t)
 	fw := newFimWatcher("foo", fwMatchedLabel)
 	f.fwLister = append(f.fwLister, fw)
 	f.objects = append(f.objects, fw)
-	pod := newPodList("bar", fw, nil, 1, corev1.PodRunning, fwMatchedLabel).Items[0]
-	pod.DeletionTimestamp = &metav1.Time{Time: time.Now()}
-	pod.ResourceVersion = "1"
+	pod1 := newPodList("bar", fw, nil, 1, corev1.PodRunning, fwMatchedLabel, true).Items[0]
+	pod1.ResourceVersion = "1"
+	pod1.DeletionTimestamp = &metav1.Time{Time: time.Now()}
 	fwc := f.newFimWatcherController(nil, nil, nil)
 
 	fwKey, err := controller.KeyFunc(fw)
 	if err != nil {
 		t.Errorf("Couldn't get key for object %#v: %v", fw, err)
 	}
-	fwc.expectations.ExpectDeletions(fwKey, []string{controller.PodKey(&pod)})
+	fwc.expectations.ExpectDeletions(fwKey, []string{controller.PodKey(&pod1)})
 
 	// A pod added with a deletion timestamp should decrement deletions, not creations.
-	fwc.addPod(&pod)
+	fwc.addPod(&pod1)
 
 	queueFW, _ := fwc.workqueue.Get()
 	if queueFW != fwKey {
@@ -1048,10 +961,10 @@ func TestDeletionTimestamp(t *testing.T) {
 
 	// An update from no deletion timestamp to having one should be treated
 	// as a deletion.
-	oldPod := newPodList("baz", fw, nil, 1, corev1.PodPending, fwMatchedLabel).Items[0]
-	oldPod.ResourceVersion = "2"
-	fwc.expectations.ExpectDeletions(fwKey, []string{controller.PodKey(&pod)})
-	fwc.updatePod(&oldPod, &pod)
+	pod2 := newPodList("baz", fw, nil, 1, corev1.PodPending, fwMatchedLabel, false).Items[0]
+	pod2.ResourceVersion = "2"
+	fwc.expectations.ExpectDeletions(fwKey, []string{controller.PodKey(&pod1)})
+	fwc.updatePod(&pod2, &pod1)
 
 	queueFW, _ = fwc.workqueue.Get()
 	if queueFW != fwKey {
@@ -1066,17 +979,12 @@ func TestDeletionTimestamp(t *testing.T) {
 
 	// An update to the pod (including an update to the deletion timestamp)
 	// should not be counted as a second delete.
-	secondPod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "qux",
-			Namespace: pod.Namespace,
-			Labels:    pod.Labels,
-		},
-	}
-	fwc.expectations.ExpectDeletions(fwKey, []string{controller.PodKey(secondPod)})
-	oldPod.DeletionTimestamp = &metav1.Time{Time: time.Now()}
-	oldPod.ResourceVersion = "2"
-	fwc.updatePod(&oldPod, &pod)
+	pod3 := newPod("qux", fw, corev1.PodRunning, true, true)
+	fwc.expectations.ExpectDeletions(fwKey, []string{controller.PodKey(pod3)})
+	pod2.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	pod2.ResourceVersion = "2"
+	pod2.Labels = fwNonMatchedLabel
+	fwc.updatePod(&pod2, &pod1)
 
 	podExp, exists, err = fwc.expectations.GetExpectations(fwKey)
 	if !exists || err != nil || podExp.Fulfilled() {
@@ -1085,14 +993,14 @@ func TestDeletionTimestamp(t *testing.T) {
 
 	// A pod with a non-nil deletion timestamp should also be ignored by the
 	// delete handler, because it's already been counted in the update.
-	fwc.deletePod(&pod)
+	fwc.deletePod(&pod1)
 	podExp, exists, err = fwc.expectations.GetExpectations(fwKey)
 	if !exists || err != nil || podExp.Fulfilled() {
 		t.Fatalf("Wrong expectations %#v", podExp)
 	}
 
 	// Deleting the second pod should clear expectations.
-	fwc.deletePod(secondPod)
+	fwc.deletePod(pod3)
 
 	queueFW, _ = fwc.workqueue.Get()
 	if queueFW != fwKey {
@@ -1104,19 +1012,6 @@ func TestDeletionTimestamp(t *testing.T) {
 	if !exists || err != nil || !podExp.Fulfilled() {
 		t.Fatalf("Wrong expectations %#v", podExp)
 	}
-}
-*/
-
-/*
-// shuffle returns a new shuffled list of container controllers.
-func shuffle(controllers []*fimv1alpha1.FimWatcher) []*fimv1alpha1.FimWatcher {
-	numControllers := len(controllers)
-	randIndexes := rand.Perm(numControllers)
-	shuffled := make([]*fimv1alpha1.FimWatcher, numControllers)
-	for i := 0; i < numControllers; i++ {
-		shuffled[i] = controllers[randIndexes[i]]
-	}
-	return shuffled
 }
 
 func TestOverlappingFimWatchers(t *testing.T) {
@@ -1134,7 +1029,6 @@ func TestOverlappingFimWatchers(t *testing.T) {
 	}
 	shuffledControllers := shuffle(controllers)
 	for i := range shuffledControllers {
-		//informers.Apps().V1().ReplicaSets().Informer().GetIndexer().Add(shuffledControllers[j])
 		f.fwLister = append(f.fwLister, shuffledControllers[i])
 		f.objects = append(f.objects, shuffledControllers[i])
 	}
@@ -1142,25 +1036,19 @@ func TestOverlappingFimWatchers(t *testing.T) {
 	// Pick a FW in the middle since the old code used to sort by name if all
 	// timestamps were equal.
 	fw := controllers[3]
-	pods := newPodList("bar", fw, nil, 1, corev1.PodRunning, fwMatchedLabel)
-	pod := &pods.Items[0]
-	f.podLister = append(f.podLister, pod)
-	f.kubeobjects = append(f.kubeobjects, pod)
+	pod := newPodList("bar", fw, nil, 1, corev1.PodRunning, fwMatchedLabel, true).Items[0]
+	f.podLister = append(f.podLister, &pod)
+	f.kubeobjects = append(f.kubeobjects, &pod)
 	fwc := f.newFimWatcherController(nil, nil, nil)
 
 	fwKey := GetKey(fw, t)
+	fwc.addPod(&pod)
 
-	fwc.addPod(pod)
 	queueFW, _ := fwc.workqueue.Get()
 	if queueFW != fwKey {
 		t.Fatalf("Expected to find key %v in queue, found %v", fwKey, queueFW)
 	}
 }
-*/
-
-//=============================================================================
-
-// getPodFimWatchers
 
 func TestPodControllerLookup(t *testing.T) {
 	f := newFixture(t)
@@ -1297,8 +1185,6 @@ func TestPodControllerLookup(t *testing.T) {
 		}
 	}
 }
-
-// getPodKeys
 
 func TestGetPodKeys(t *testing.T) {
 	f := newFixture(t)

@@ -41,24 +41,34 @@ const (
 	fimdService            = "fimd-svc"
 	fimdSvcPortName        = "grpc"
 
-	// FimWatcherAnnotationKey value to annotate a pod being watched by a FimD daemon.
+	// FimWatcherAnnotationKey value to annotate a pod being watched by a FimD
+	// daemon.
 	FimWatcherAnnotationKey = "clustergarage.io/fim-watcher"
 
-	// SuccessSynced is used as part of the Event 'reason' when a FimWatcher is synced.
+	// SuccessSynced is used as part of the Event 'reason' when a FimWatcher is
+	// synced.
 	SuccessSynced = "Synced"
-	// SuccessAdded is used as part of the Event 'reason' when a FimWatcher is synced.
+	// SuccessAdded is used as part of the Event 'reason' when a FimWatcher is
+	// synced.
 	SuccessAdded = "Added"
-	// SuccessRemoved is used as part of the Event 'reason' when a FimWatcher is synced.
+	// SuccessRemoved is used as part of the Event 'reason' when a FimWatcher is
+	// synced.
 	SuccessRemoved = "Removed"
-	// MessageResourceAdded is the message used for an Event fired when a FimWatcher
-	// is synced added.
+	// MessageResourceAdded is the message used for an Event fired when a
+	// FimWatcher is synced added.
 	MessageResourceAdded = "Added FimD watcher on %v"
-	// MessageResourceRemoved is the message used for an Event fired when a FimWatcher
-	// is synced removed.
+	// MessageResourceRemoved is the message used for an Event fired when a
+	// FimWatcher is synced removed.
 	MessageResourceRemoved = "Removed FimD watcher on %v"
-	// MessageResourceSynced is the message used for an Event fired when a FimWatcher
-	// is synced successfully.
+	// MessageResourceSynced is the message used for an Event fired when a
+	// FimWatcher is synced successfully.
 	MessageResourceSynced = "FimWatcher synced successfully"
+
+	// statusUpdateRetries is the number of times we retry updating a
+	// FimWatcher's status.
+	statusUpdateRetries = 1
+	// minReadySeconds
+	minReadySeconds = 10
 )
 
 var (
@@ -78,7 +88,6 @@ var (
 type FimWatcherController struct {
 	// GroupVersionKind indicates the controller type.
 	// Different instances of this struct may handle different GVKs.
-	// For example, this struct can be used (with adapters) to handle ReplicationController.
 	schema.GroupVersionKind
 
 	// kubeclientset is a standard Kubernetes clientset.
@@ -261,6 +270,22 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 		return
 	}
 
+	// If it has a FimWatcher annotation that's all that matters.
+	if fwName, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found {
+		fw, err := fwc.fwLister.FimWatchers(pod.Namespace).Get(fwName)
+		if err != nil {
+			return
+		}
+		fwKey, err := controller.KeyFunc(fw)
+		if err != nil {
+			return
+		}
+		glog.V(4).Infof("Pod %s created: %#v.", pod.Name, pod)
+		fwc.expectations.CreationObserved(fwKey)
+		fwc.enqueueFimWatcher(fw)
+		return
+	}
+
 	// If this pod is a FimD pod, we need to first initialize the connection
 	// to the gRPC server run on the daemon. Then a check is done on any pods
 	// running on the same node as the daemon, if they match our nodeSelector
@@ -375,7 +400,8 @@ func (fwc *FimWatcherController) deletePod(obj interface{}) {
 	// When a delete is dropped, the relist will notice a pod in the store not
 	// in the list, leading to the insertion of a tombstone object which contains
 	// the deleted key/value. Note that this value might be stale. If the pod
-	// changed labels the new ReplicaSet will not be woken up till the periodic resync.
+	// changed labels the new FimWatcher will not be woken up till the periodic
+	// resync.
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 		if !ok {
@@ -446,6 +472,16 @@ func (fwc *FimWatcherController) enqueueFimWatcher(obj interface{}) {
 	fwc.workqueue.AddRateLimited(key)
 }
 
+// enqueueFimWatcherAfter ...
+func (fwc *FimWatcherController) enqueueFimWatcherAfter(obj interface{}, after time.Duration) {
+	key, err := controller.KeyFunc(obj)
+	if err != nil {
+		runtime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
+		return
+	}
+	fwc.workqueue.AddAfter(key, after)
+}
+
 // runWorker is a long-running function that will continually call the
 // processNextWorkItem function in order to read and process a message on the
 // workqueue.
@@ -483,13 +519,13 @@ func (fwc *FimWatcherController) processNextWorkItem() bool {
 			// Forget here else we'd go into a loop of attempting to
 			// process a work item that is invalid.
 			fwc.workqueue.Forget(obj)
-			runtime.HandleError(fmt.Errorf("expected string in workqueue but got %#v", obj))
+			runtime.HandleError(fmt.Errorf("Expected string in workqueue but got %#v", obj))
 			return nil
 		}
 		// Run the syncHandler, passing it the namespace/name string of the
 		// FimWatcher resource to be synced.
 		if err := fwc.syncHandler(key); err != nil {
-			return fmt.Errorf("error syncing '%s': %s", key, err.Error())
+			return fmt.Errorf("Error syncing '%s': %s", key, err.Error())
 		}
 		// Finally, if no error occurs we Forget this item so it does not
 		// get queued again until another change happens.
@@ -499,7 +535,8 @@ func (fwc *FimWatcherController) processNextWorkItem() bool {
 	}(obj)
 
 	if err != nil {
-		runtime.HandleError(err)
+		runtime.HandleError(fmt.Errorf("Sync %q failed with %v", obj, err))
+		fwc.workqueue.AddRateLimited(obj)
 		return true
 	}
 	return true
@@ -692,7 +729,7 @@ func (fwc *FimWatcherController) syncFimWatcher(key string) error {
 	// Always updates status as pods come up or die.
 	updatedFW, err := updateFimWatcherStatus(fwc.fimclientset.FimcontrollerV1alpha1().FimWatchers(fw.Namespace), fw, newStatus)
 	if err != nil {
-		// Multiple things could lead to this update failing. Requeuing the replica set ensures
+		// Multiple things could lead to this update failing. Requeuing the fim watcher ensures
 		// Returning an error causes a requeue without forcing a hotloop.
 		return err
 	}
@@ -701,7 +738,11 @@ func (fwc *FimWatcherController) syncFimWatcher(key string) error {
 		return err
 	}
 
-	//fwc.recorder.Event(fw, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
+	// Resync the FimWatcher after MinReadySeconds as a last line of defense to guard against clock-skew.
+	if manageSubjectsErr == nil &&
+		minReadySeconds > 0 /* && updatedFW.Status.ObservablePods != *(updatedRS.Spec.ObservablePods)*/ {
+		fwc.enqueueFimWatcherAfter(updatedFW, time.Duration(minReadySeconds)*time.Second)
+	}
 	return manageSubjectsErr
 }
 

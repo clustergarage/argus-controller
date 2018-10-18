@@ -2,6 +2,7 @@ package fimcontroller
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	errorsapi "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	errorsutil "k8s.io/apimachinery/pkg/util/errors"
@@ -111,17 +113,46 @@ type updatePodFunc func(pod *corev1.Pod) error
 func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1alpha1.FimWatcher,
 	newStatus fimv1alpha1.FimWatcherStatus) (*fimv1alpha1.FimWatcher, error) {
 
-	// NEVER modify objects from the store. It's a read-only, local cache.
-	// You can use DeepCopy() to make a deep copy of original object and modify this copy
-	// Or create a copy manually for better performance
-	fwCopy := fw.DeepCopy()
-	//fwCopy.Status.Subjects = newStatus.Subjects
-	fwCopy.Status.ObservablePods = newStatus.ObservablePods
-	// If the CustomResourceSubresources feature gate is not enabled,
-	// we must use Update instead of UpdateStatus to update the Status block of the FimWatcher resource.
-	// UpdateStatus will not allow changes to the Spec of the resource,
-	// which is ideal for ensuring nothing other than resource status has been updated.
-	return fwCopy, nil
+	if fw.Status.ObservablePods == newStatus.ObservablePods {
+		return fw, nil
+	}
+	//newStatus.ObservedGeneration = fw.Generation
+
+	var getErr, updateErr error
+	var updatedFW *fimv1alpha1.FimWatcher
+	for i, fw := 0, fw; ; i++ {
+		glog.V(4).Infof(fmt.Sprintf("Updating status for %v: %s/%s, ", fw.Kind, fw.Namespace, fw.Name) +
+			fmt.Sprintf("observable pods %d->%d", fw.Status.ObservablePods, newStatus.ObservablePods))
+
+		// NEVER modify objects from the store. It's a read-only, local cache.
+		// You can use DeepCopy() to make a deep copy of original object and
+		// modify this copy or create a copy manually for better performance.
+		fwCopy := fw.DeepCopy()
+		// If the CustomResourceSubresources feature gate is not enabled, we
+		// must use Update instead of UpdateStatus to update the Status block
+		// of the FimWatcher resource.
+		// UpdateStatus will not allow changes to the Spec of the resource,
+		// which is ideal for ensuring nothing other than resource status has
+		// been updated.
+		fwCopy.Status.ObservablePods = newStatus.ObservablePods
+
+		updatedFW, updateErr = c.UpdateStatus(fwCopy)
+		if updateErr == nil {
+			return updatedFW, nil
+		}
+		// Stop retrying if we exceed statusUpdateRetries - the fim watcher will be requeued with a rate limit.
+		if i >= statusUpdateRetries {
+			break
+		}
+		// Update the FimWatcher with the latest resource version for the next poll
+		if fw, getErr = c.Get(fw.Name, metav1.GetOptions{}); getErr != nil {
+			// If the GET fails we can't trust status.ObservablePods anymore. This error
+			// is bound to be more interesting than the update failure.
+			return nil, getErr
+		}
+	}
+
+	return nil, updateErr
 }
 
 // calculateStatus creates a new status from a given FimWatcher and filteredPods array.
