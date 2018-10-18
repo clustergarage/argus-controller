@@ -386,6 +386,26 @@ func filterInformerActions(actions []core.Action) []core.Action {
 	return ret
 }
 
+func (f *fixture) syncHandler_CheckFimWatcherSynced(fwc *FimWatcherController, fw *fimv1alpha1.FimWatcher,
+	received chan string) func(key string) error {
+
+	return func(key string) error {
+		namespace, name, err := cache.SplitMetaNamespaceKey(key)
+		if err != nil {
+			f.t.Errorf("Error splitting key: %v", err)
+		}
+		fwSpec, err := fwc.fwLister.FimWatchers(namespace).Get(name)
+		if err != nil {
+			f.t.Errorf("Expected to find fim watcher under key %v: %v", key, err)
+		}
+		if !apiequality.Semantic.DeepDerivative(fwSpec, fw) {
+			f.t.Errorf("\nExpected %#v,\nbut got %#v", fw, fwSpec)
+		}
+		close(received)
+		return nil
+	}
+}
+
 func (f *fixture) expectUpdateFimWatcherStatusAction(fw *fimv1alpha1.FimWatcher) {
 	action := core.NewUpdateAction(schema.GroupVersionResource{
 		Group:    fwGroup,
@@ -422,10 +442,6 @@ func (f *fixture) expectUpdatePodAction(pod *corev1.Pod) {
 	}, pod.Namespace, pod))
 }
 
-//=============================================================================
-
-// NewFimWatcherController
-
 func TestSyncFimWatcherDoesNothing(t *testing.T) {
 	f := newFixture(t)
 	fw := newFimWatcher("foo", fwMatchedLabel)
@@ -458,10 +474,6 @@ func TestLocalFimdConnection(t *testing.T) {
 	f.runController(fwc, GetKey(fw, t), false)
 }
 
-// NewFimWatchController w/fimdConnection
-
-// addFimWatcher | runWorker | processNextWorkItem
-
 func TestWatchControllers(t *testing.T) {
 	f := newFixture(t)
 	fakeWatch := watch.NewFake()
@@ -475,7 +487,6 @@ func TestWatchControllers(t *testing.T) {
 
 	var fw fimv1alpha1.FimWatcher
 	received := make(chan string)
-
 	// The update sent through the fakeWatcher should make its way into the workqueue,
 	// and eventually into the syncHandler. The handler validates the received controller
 	// and closes the received channel to indicate that the test can finish.
@@ -507,8 +518,6 @@ func TestWatchControllers(t *testing.T) {
 
 // updateFimWatcher
 
-// addPod
-
 func TestWatchPods(t *testing.T) {
 	f := newFixture(t)
 	fakeWatch := watch.NewFake()
@@ -522,21 +531,7 @@ func TestWatchPods(t *testing.T) {
 	received := make(chan string)
 	// The pod update sent through the fakeWatcher should figure out the managing FimWatcher and
 	// send it into the syncHandler.
-	fwc.syncHandler = func(key string) error {
-		namespace, name, err := cache.SplitMetaNamespaceKey(key)
-		if err != nil {
-			t.Errorf("Error splitting key: %v", err)
-		}
-		fwSpec, err := fwc.fwLister.FimWatchers(namespace).Get(name)
-		if err != nil {
-			t.Errorf("Expected to find fim watcher under key %v: %v", key, err)
-		}
-		if !apiequality.Semantic.DeepDerivative(fwSpec, fw) {
-			t.Errorf("\nExpected %#v,\nbut got %#v", fw, fwSpec)
-		}
-		close(received)
-		return nil
-	}
+	fwc.syncHandler = f.syncHandler_CheckFimWatcherSynced(fwc, fw, received)
 
 	stopCh := make(chan struct{})
 	defer close(stopCh)
@@ -577,21 +572,7 @@ func TestAddDaemonPod(t *testing.T) {
 	received := make(chan string)
 	// The pod update sent through the fakeWatcher should figure out the managing FimWatcher and
 	// send it into the syncHandler.
-	fwc.syncHandler = func(key string) error {
-		namespace, name, err := cache.SplitMetaNamespaceKey(key)
-		if err != nil {
-			t.Errorf("Error splitting key: %v", err)
-		}
-		fwSpec, err := fwc.fwLister.FimWatchers(namespace).Get(name)
-		if err != nil {
-			t.Errorf("Expected to find fim watcher under key %v: %v", key, err)
-		}
-		if !apiequality.Semantic.DeepDerivative(fwSpec, fw) {
-			t.Errorf("\nExpected %#v,\nbut got %#v", fw, fwSpec)
-		}
-		close(received)
-		return nil
-	}
+	fwc.syncHandler = f.syncHandler_CheckFimWatcherSynced(fwc, fw, received)
 
 	stopCh := make(chan struct{})
 	defer close(stopCh)
@@ -601,7 +582,6 @@ func TestAddDaemonPod(t *testing.T) {
 	go f.kubeinformers.Core().V1().Pods().Informer().Run(stopCh)
 	go fwc.Run(1, stopCh)
 
-	//fakeWatch.Add(daemon)
 	fwc.addPod(daemon)
 
 	select {
@@ -611,7 +591,41 @@ func TestAddDaemonPod(t *testing.T) {
 	}
 }
 
-// updatePod
+func TestAddPodBeingDeleted(t *testing.T) {
+	f := newFixture(t)
+	fakeWatch := watch.NewFake()
+	kubeclient := kubefake.NewSimpleClientset()
+	kubeclient.PrependWatchReactor("pods", core.DefaultWatchReactor(fakeWatch, nil))
+	fw := newFimWatcher("foo", fwMatchedLabel)
+	f.fwLister = append(f.fwLister, fw)
+	f.objects = append(f.objects, fw)
+	pod := newPod("bar", fw, corev1.PodRunning, true, true)
+	pod.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	f.podLister = append(f.podLister, pod)
+	f.kubeobjects = append(f.kubeobjects, pod)
+	fwc := f.newFimWatcherController(kubeclient, nil, nil)
+
+	received := make(chan string)
+	// The pod update sent through the fakeWatcher should figure out the managing FimWatcher and
+	// send it into the syncHandler.
+	fwc.syncHandler = f.syncHandler_CheckFimWatcherSynced(fwc, fw, received)
+
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+
+	// Start only the pod watcher and the workqueue, send a watch event,
+	// and make sure it hits the sync method for the right FimWatcher.
+	go f.kubeinformers.Core().V1().Pods().Informer().Run(stopCh)
+	go fwc.Run(1, stopCh)
+
+	fakeWatch.Add(pod)
+
+	select {
+	case <-received:
+	case <-time.After(wait.ForeverTestTimeout):
+		t.Errorf("unexpected timeout from result channel")
+	}
+}
 
 func TestUpdatePods(t *testing.T) {
 	f := newFixture(t)
@@ -643,7 +657,8 @@ func TestUpdatePods(t *testing.T) {
 
 	go wait.Until(fwc.runWorker, 10*time.Millisecond, stopCh)
 
-	// case 1: Pod with a ControllerRef
+	// case 1: Pod without FimD watcher and new ResourceVersion should enqueue
+	// update.
 	pod1 := newPodList("bar", fw1, f.kubeinformers.Core().V1().Pods().Informer().GetIndexer(),
 		1, corev1.PodRunning, fwMatchedLabel).Items[0]
 	pod1.ResourceVersion = "1"
@@ -664,72 +679,81 @@ func TestUpdatePods(t *testing.T) {
 		}
 	}
 
-	/*
-		// case 2: Remove ControllerRef (orphan). Expect to sync label-matching FW.
-		pod1 = newPod("bar", fw1, corev1.PodRunning, true, false)
-		pod1.ResourceVersion = "1"
-		pod1.Labels = fwNonMatchedLabel
-		pod2 = pod1
-		pod2.ResourceVersion = "2"
-		fwc.updatePod(&pod1, &pod2)
-		expected = sets.NewString(fw2.Name)
-		for _, name := range expected.List() {
-			t.Logf("Expecting update for %+v", name)
-			select {
-			case got := <-received:
-				if !expected.Has(got) {
-					t.Errorf("Expected keys %#v got %v", expected, got)
-				}
-			case <-time.After(wait.ForeverTestTimeout):
-				t.Errorf("Expected update notifications for fim watchers")
-			}
-		}
+	// case 2: Pod without FimD watcher and same ResourceVersion should not
+	// enqueue update.
+	pod1 = *newPod("bar", fw1, corev1.PodRunning, true, false)
+	pod1.ResourceVersion = "2"
+	pod1.Labels = fwNonMatchedLabel
+	pod2 = pod1
+	pod2.ResourceVersion = "2"
+	fwc.updatePod(&pod1, &pod2)
+	t.Logf("Not expecting update for %+v", fw2.Name)
+	select {
+	case got := <-received:
+		t.Errorf("Not expecting update for %v", got)
+	case <-time.After(time.Millisecond):
+	}
 
-		// case 3: Remove ControllerRef (orphan). Expect to sync both former owner and
-		// any label-matching FW.
-		pod1 = newPod("bar", fw1, corev1.PodRunning, true, false)
-		pod1.ResourceVersion = "1"
-		pod1.Labels = fwNonMatchedLabel
-		pod2 = pod1
-		pod2.ResourceVersion = "2"
-		fwc.updatePod(&pod1, &pod2)
-		expected = sets.NewString(fw1.Name, fw2.Name)
-		for _, name := range expected.List() {
-			t.Logf("Expecting update for %+v", name)
-			select {
-			case got := <-received:
-				if !expected.Has(got) {
-					t.Errorf("Expected keys %#v got %v", expected, got)
-				}
-			case <-time.After(wait.ForeverTestTimeout):
-				t.Errorf("Expected update notifications for fim watchers")
+	// case 3: Pod with FimD watcher, DeletionTimestamp, different labels should
+	// call deletePod on both old,new pods and enqueue update.
+	pod1 = *newPod("bar", fw1, corev1.PodRunning, true, true)
+	pod1.ResourceVersion = "1"
+	pod2 = pod1
+	pod2.ResourceVersion = "2"
+	pod2.Labels = fwNonMatchedLabel
+	pod2.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	fwc.updatePod(&pod1, &pod2)
+	expected = sets.NewString(fw1.Name)
+	for _, name := range expected.List() {
+		t.Logf("Expecting update for %+v", name)
+		select {
+		case got := <-received:
+			if !expected.Has(got) {
+				t.Errorf("Expected keys %#v got %v", expected, got)
 			}
+		case <-time.After(wait.ForeverTestTimeout):
+			t.Errorf("Expected update notifications for fim watchers")
 		}
-
-		// case 4: Keep ControllerRef, change labels. Expect to sync owning FW.
-		pod1 = newPod("bar", fw1, corev1.PodRunning, true, false)
-		pod1.ResourceVersion = "1"
-		pod1.Labels = fwMatchedLabel
-		pod2 = pod1
-		pod2.Labels = fwNonMatchedLabel
-		pod2.ResourceVersion = "2"
-		fwc.updatePod(&pod1, &pod2)
-		expected = sets.NewString(fw2.Name)
-		for _, name := range expected.List() {
-			t.Logf("Expecting update for %+v", name)
-			select {
-			case got := <-received:
-				if !expected.Has(got) {
-					t.Errorf("Expected keys %#v got %v", expected, got)
-				}
-			case <-time.After(wait.ForeverTestTimeout):
-				t.Errorf("Expected update notifications for fim watchers")
-			}
-		}
-	*/
+	}
 }
 
-// deletePod
+func TestDeleteDaemonPod(t *testing.T) {
+	f := newFixture(t)
+	fakeWatch := watch.NewFake()
+	kubeclient := kubefake.NewSimpleClientset()
+	kubeclient.PrependWatchReactor("pods", core.DefaultWatchReactor(fakeWatch, nil))
+	fw := newFimWatcher("foo", fwMatchedLabel)
+	f.fwLister = append(f.fwLister, fw)
+	f.objects = append(f.objects, fw)
+	pod := newPod("bar", fw, corev1.PodRunning, true, true)
+	daemon := newDaemonPod("baz", fw)
+	ep := newEndpoint(fimdService, daemon)
+	f.podLister = append(f.podLister, pod, daemon)
+	f.endpointsLister = append(f.endpointsLister, ep)
+	f.kubeobjects = append(f.kubeobjects, pod, daemon, ep)
+	fwc := f.newFimWatcherController(kubeclient, nil, nil)
+
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+
+	// Start only the pod watcher and the workqueue, send a watch event,
+	// and make sure it hits the sync method for the right FimWatcher.
+	go f.kubeinformers.Core().V1().Pods().Informer().Run(stopCh)
+	go fwc.Run(1, stopCh)
+
+	fwc.addPod(daemon)
+	if len(fwc.fimdConnections) == 0 {
+		t.Errorf("Expected fimdConnections to be added; have %v", len(fwc.fimdConnections))
+	}
+
+	fwc.deletePod(daemon)
+	if len(fwc.fimdConnections) > 0 {
+		t.Errorf("Expected fimdConnections to be removed; still have %v", len(fwc.fimdConnections))
+	}
+	if _, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found {
+		t.Errorf("Expected pod annotations to be updated %#v", pod.Name)
+	}
+}
 
 func TestDeleteFinalStateUnknown(t *testing.T) {
 	f := newFixture(t)

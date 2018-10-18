@@ -1,7 +1,7 @@
 # fim-controller
 
 [![go report](https://goreportcard.com/badge/github.com/clustergarage/fim-controller?style=flat-square)](https://goreportcard.com/report/github.com/clustergarage/fim-controller)
-[![Docker Automated build](https://img.shields.io/docker/automated/clustergarage/fim-controller.svg?style=flat-square)](https://hub.docker.com/r/clustergarage/fim-controller)
+[![Docker Automated build](https://img.shields.io/docker/build/clustergarage/fim-controller.svg?style=flat-square)](https://hub.docker.com/r/clustergarage/fim-controller)
 
 This repository implements a Kubernetes controller for watching FimWatcher resources as defined with a CustomResourceDefinition.
 
