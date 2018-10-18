@@ -115,11 +115,11 @@ Unit and integration tests included for the controller behavior can be run with:
 go test pkg/controller/*
 ```
 
-Or, optionally running with code coverage and generating an HTML report of the results:
+Or, optionally running with [code coverage](https://blog.golang.org/cover) and generating an HTML report of the results:
 
 ```
-go test -cover -coverprofile coverage/out pkg/controller/*
-go tool cover -html coverage/out
+go test -cover -coverprofile coverage/cover.out pkg/controller/*
+go tool cover -html coverage/cover.out
 ```
 
 #### Code Verification

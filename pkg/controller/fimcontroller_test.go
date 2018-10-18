@@ -3,11 +3,12 @@ package fimcontroller
 import (
 	//"errors"
 	"fmt"
+	"io"
 	//"math/rand"
 	//"net/http/httptest"
-	"net/url"
+	//"net/url"
 	"reflect"
-	"strings"
+	//"strings"
 	//"sync"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/diff"
 	"k8s.io/apimachinery/pkg/util/sets"
 	//"k8s.io/apimachinery/pkg/util/uuid"
+	gomock "github.com/golang/mock/gomock"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 	kubeinformers "k8s.io/client-go/informers"
@@ -41,8 +43,8 @@ import (
 	fimclientset "clustergarage.io/fim-controller/pkg/client/clientset/versioned"
 	"clustergarage.io/fim-controller/pkg/client/clientset/versioned/fake"
 	informers "clustergarage.io/fim-controller/pkg/client/informers/externalversions"
-	//pb "github.com/clustergarage/fim-proto/golang"
-	//pbmock "github.com/clustergarage/fim-proto/golang/mock"
+	pb "github.com/clustergarage/fim-proto/golang"
+	pbmock "github.com/clustergarage/fim-proto/golang/mock"
 )
 
 const (
@@ -67,6 +69,7 @@ const (
 var (
 	fwMatchedLabel    = map[string]string{"foo": "bar"}
 	fwNonMatchedLabel = map[string]string{"foo": "baz"}
+	fwDaemonLabel     = map[string]string{"foo": "baz"}
 
 	fwAnnotated = func(fw *fimv1alpha1.FimWatcher) map[string]string {
 		return map[string]string{FimWatcherAnnotationKey: fw.Name}
@@ -135,18 +138,18 @@ func (f *fixture) newFimWatcherController(kubeclient clientset.Interface, client
 
 func (f *fixture) updateInformers() {
 	var items []interface{}
-	// update list of pods in indexer
+
 	for _, p := range f.podLister {
 		items = append(items, p)
 	}
 	f.kubeinformers.Core().V1().Pods().Informer().GetIndexer().Replace(items, "")
-	// update list of endpoints in indexer
+
 	items = items[:0]
 	for _, p := range f.endpointsLister {
 		items = append(items, p)
 	}
 	f.kubeinformers.Core().V1().Endpoints().Informer().GetIndexer().Replace(items, "")
-	// update list of fimwatchers in indexer
+
 	items = items[:0]
 	for _, p := range f.fwLister {
 		items = append(items, p)
@@ -154,6 +157,7 @@ func (f *fixture) updateInformers() {
 	f.fiminformers.Fimcontroller().V1alpha1().FimWatchers().Informer().GetIndexer().Replace(items, "")
 }
 
+/*
 func (f *fixture) resetActions() {
 	f.actions = f.actions[:0]
 	f.kubeactions = f.kubeactions[:0]
@@ -170,6 +174,7 @@ func skipListerFn(verb string, url url.URL) bool {
 	}
 	return false
 }
+*/
 
 func newFimWatcher(name string, selectorMap map[string]string) *fimv1alpha1.FimWatcher {
 	return &fimv1alpha1.FimWatcher{
@@ -271,6 +276,15 @@ func newEndpoint(name string, pod *corev1.Pod) *corev1.Endpoints {
 			}},
 		}},
 	}
+}
+
+func mockGetWatchState(ctrl *gomock.Controller, handle *pb.FimdHandle) *FimdConnection {
+	stream := pbmock.NewMockFimd_GetWatchStateClient(ctrl)
+	stream.EXPECT().Recv().Return(handle, nil)
+	stream.EXPECT().Recv().Return(nil, io.EOF)
+	client := pbmock.NewMockFimdClient(ctrl)
+	client.EXPECT().GetWatchState(gomock.Any(), gomock.Any()).Return(stream, nil)
+	return NewFimdConnection(fwHostURL, client)
 }
 
 func (f *fixture) runController(fwc *FimWatcherController, fwKey string, expectError bool) {
@@ -426,7 +440,27 @@ func TestSyncFimWatcherDoesNothing(t *testing.T) {
 	f.runController(fwc, GetKey(fw, t), false)
 }
 
-// runWorker | processNextWorkItem
+func TestLocalFimdConnection(t *testing.T) {
+	f := newFixture(t)
+	fw := newFimWatcher("foo", fwMatchedLabel)
+	f.fwLister = append(f.fwLister, fw)
+	f.objects = append(f.objects, fw)
+	pod := newPod("bar", fw, corev1.PodRunning, false, false)
+	f.podLister = append(f.podLister, pod)
+	f.kubeobjects = append(f.kubeobjects, pod)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	fc := mockGetWatchState(ctrl, &pb.FimdHandle{})
+	fwc := f.newFimWatcherController(nil, nil, fc)
+
+	f.expectUpdateFimWatcherStatusAction(fw)
+	f.runController(fwc, GetKey(fw, t), false)
+}
+
+// NewFimWatchController w/fimdConnection
+
+// addFimWatcher | runWorker | processNextWorkItem
 
 func TestWatchControllers(t *testing.T) {
 	f := newFixture(t)
@@ -439,7 +473,7 @@ func TestWatchControllers(t *testing.T) {
 	defer close(stopCh)
 	f.fiminformers.Start(stopCh)
 
-	var testFWSpec fimv1alpha1.FimWatcher
+	var fw fimv1alpha1.FimWatcher
 	received := make(chan string)
 
 	// The update sent through the fakeWatcher should make its way into the workqueue,
@@ -451,8 +485,8 @@ func TestWatchControllers(t *testing.T) {
 			t.Errorf("Expected to find fim watcher under key %v", key)
 		}
 		fwSpec := *obj.(*fimv1alpha1.FimWatcher)
-		if !apiequality.Semantic.DeepDerivative(fwSpec, testFWSpec) {
-			t.Errorf("Expected %#v, but got %#v", testFWSpec, fwSpec)
+		if !apiequality.Semantic.DeepDerivative(fwSpec, fw) {
+			t.Errorf("Expected %#v, but got %#v", fw, fwSpec)
 		}
 		close(received)
 		return nil
@@ -461,8 +495,8 @@ func TestWatchControllers(t *testing.T) {
 	// and make sure it hits the sync method.
 	go wait.Until(fwc.runWorker, 10*time.Millisecond, stopCh)
 
-	testFWSpec.Name = "foo"
-	fakeWatch.Add(&testFWSpec)
+	fw.Name = "foo"
+	fakeWatch.Add(&fw)
 
 	select {
 	case <-received:
@@ -471,11 +505,7 @@ func TestWatchControllers(t *testing.T) {
 	}
 }
 
-// addFimWatcher
-
 // updateFimWatcher
-
-// delete FimWatcher
 
 // addPod
 
@@ -517,9 +547,62 @@ func TestWatchPods(t *testing.T) {
 	go fwc.Run(1, stopCh)
 
 	pods := newPodList("bar", fw, nil, 1, corev1.PodRunning, fwMatchedLabel)
-	testPod := pods.Items[0]
-	testPod.Status.Phase = corev1.PodFailed
-	fakeWatch.Add(&testPod)
+	pod := pods.Items[0]
+	pod.Status.Phase = corev1.PodFailed
+	fakeWatch.Add(&pod)
+
+	select {
+	case <-received:
+	case <-time.After(wait.ForeverTestTimeout):
+		t.Errorf("unexpected timeout from result channel")
+	}
+}
+
+func TestAddDaemonPod(t *testing.T) {
+	f := newFixture(t)
+	fakeWatch := watch.NewFake()
+	kubeclient := kubefake.NewSimpleClientset()
+	kubeclient.PrependWatchReactor("pods", core.DefaultWatchReactor(fakeWatch, nil))
+	fw := newFimWatcher("foo", fwMatchedLabel)
+	f.fwLister = append(f.fwLister, fw)
+	f.objects = append(f.objects, fw)
+	pod := newPod("bar", fw, corev1.PodRunning, true, false)
+	daemon := newDaemonPod("baz", fw)
+	ep := newEndpoint(fimdService, daemon)
+	f.podLister = append(f.podLister, pod, daemon)
+	f.endpointsLister = append(f.endpointsLister, ep)
+	f.kubeobjects = append(f.kubeobjects, pod, daemon, ep)
+	fwc := f.newFimWatcherController(kubeclient, nil, nil)
+
+	received := make(chan string)
+	// The pod update sent through the fakeWatcher should figure out the managing FimWatcher and
+	// send it into the syncHandler.
+	fwc.syncHandler = func(key string) error {
+		namespace, name, err := cache.SplitMetaNamespaceKey(key)
+		if err != nil {
+			t.Errorf("Error splitting key: %v", err)
+		}
+		fwSpec, err := fwc.fwLister.FimWatchers(namespace).Get(name)
+		if err != nil {
+			t.Errorf("Expected to find fim watcher under key %v: %v", key, err)
+		}
+		if !apiequality.Semantic.DeepDerivative(fwSpec, fw) {
+			t.Errorf("\nExpected %#v,\nbut got %#v", fw, fwSpec)
+		}
+		close(received)
+		return nil
+	}
+
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+
+	// Start only the pod watcher and the workqueue, send a watch event,
+	// and make sure it hits the sync method for the right FimWatcher.
+	go f.kubeinformers.Core().V1().Pods().Informer().Run(stopCh)
+	go fwc.Run(1, stopCh)
+
+	//fakeWatch.Add(daemon)
+	fwc.addPod(daemon)
 
 	select {
 	case <-received:
@@ -549,7 +632,7 @@ func TestUpdatePods(t *testing.T) {
 		}
 		fwSpec, err := fwc.fwLister.FimWatchers(namespace).Get(name)
 		if err != nil {
-			t.Errorf("Expected to find replica set under key %v: %v", key, err)
+			t.Errorf("Expected to find fim watcher under key %v: %v", key, err)
 		}
 		received <- fwSpec.Name
 		return nil
@@ -577,7 +660,7 @@ func TestUpdatePods(t *testing.T) {
 				t.Errorf("Expected keys %#v got %v", expected, got)
 			}
 		case <-time.After(wait.ForeverTestTimeout):
-			t.Errorf("Expected update notifications for replica sets")
+			t.Errorf("Expected update notifications for fim watchers")
 		}
 	}
 
@@ -598,7 +681,7 @@ func TestUpdatePods(t *testing.T) {
 					t.Errorf("Expected keys %#v got %v", expected, got)
 				}
 			case <-time.After(wait.ForeverTestTimeout):
-				t.Errorf("Expected update notifications for replica sets")
+				t.Errorf("Expected update notifications for fim watchers")
 			}
 		}
 
@@ -619,7 +702,7 @@ func TestUpdatePods(t *testing.T) {
 					t.Errorf("Expected keys %#v got %v", expected, got)
 				}
 			case <-time.After(wait.ForeverTestTimeout):
-				t.Errorf("Expected update notifications for replica sets")
+				t.Errorf("Expected update notifications for fim watchers")
 			}
 		}
 
@@ -640,7 +723,7 @@ func TestUpdatePods(t *testing.T) {
 					t.Errorf("Expected keys %#v got %v", expected, got)
 				}
 			case <-time.After(wait.ForeverTestTimeout):
-				t.Errorf("Expected update notifications for replica sets")
+				t.Errorf("Expected update notifications for fim watchers")
 			}
 		}
 	*/

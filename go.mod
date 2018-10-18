@@ -4,7 +4,7 @@ require (
 	cloud.google.com/go v0.29.0 // indirect
 	github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973 // indirect
 	github.com/boltdb/bolt v1.3.1 // indirect
-	github.com/clustergarage/fim-proto v0.0.0-20181004164814-b9eeaf6d6a0e
+	github.com/clustergarage/fim-proto v0.0.0-20181016135815-bda85f8576d1
 	github.com/coreos/bbolt v1.3.0 // indirect
 	github.com/coreos/etcd v3.3.9+incompatible // indirect
 	github.com/coreos/go-semver v0.2.0 // indirect

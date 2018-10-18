@@ -9,6 +9,8 @@ github.com/clustergarage/fim-proto v0.0.0-20181004164120-f1bd374f5997 h1:BoOeH+L
 github.com/clustergarage/fim-proto v0.0.0-20181004164120-f1bd374f5997/go.mod h1:mH6f9GERQl4jjlAHwx8MZ1DMI+qj7I47phuW7DqBVes=
 github.com/clustergarage/fim-proto v0.0.0-20181004164814-b9eeaf6d6a0e h1:OCrVHTI6HpnjsNzPwwORLiPNe5sZGL7a3RL814HwKCw=
 github.com/clustergarage/fim-proto v0.0.0-20181004164814-b9eeaf6d6a0e/go.mod h1:mH6f9GERQl4jjlAHwx8MZ1DMI+qj7I47phuW7DqBVes=
+github.com/clustergarage/fim-proto v0.0.0-20181016135815-bda85f8576d1 h1:YYuW34XVYFxgoinuc3A/yE2l/+zCkYNQTsV18fYuuCA=
+github.com/clustergarage/fim-proto v0.0.0-20181016135815-bda85f8576d1/go.mod h1:mH6f9GERQl4jjlAHwx8MZ1DMI+qj7I47phuW7DqBVes=
 github.com/coreos/bbolt v1.3.0 h1:HIgH5xUWXT914HCI671AxuTTqjj64UOFr7pHn48LUTI=
 github.com/coreos/bbolt v1.3.0/go.mod h1:iRUV2dpdMOn7Bo10OQBFzIJO9kkE559Wcmn+qkEiiKk=
 github.com/coreos/etcd v3.3.9+incompatible h1:/pWnp1yEff0z+vBEOBFLZZ22Ux5xoVozEe7X0VFyRNo=
