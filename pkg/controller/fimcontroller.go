@@ -192,6 +192,8 @@ func NewFimWatcherController(kubeclientset kubernetes.Interface, fimclientset cl
 	// If specifying a fimdConnection for a daemon that is located out-of-cluster,
 	// initialize the fimd connection here, because we will not receive an addPod
 	// event where it is normally initialized.
+	fwc.fimdConnections = fwc.fimdConnections[:0]
+	fimdURL = ""
 	if fimdConnection != nil {
 		fwc.fimdConnections = append(fwc.fimdConnections, fimdConnection)
 		fimdURL = fimdConnection.hostURL
@@ -582,6 +584,7 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 					return err
 				}
 
+				fwc.expectations.DeletionObserved(fwKey, controller.PodKey(pod))
 				fwc.recorder.Eventf(fw, corev1.EventTypeNormal, SuccessRemoved, MessageResourceRemoved, pod.Spec.NodeName)
 			}
 		}
@@ -635,14 +638,15 @@ func (fwc *FimWatcherController) syncFimWatcher(key string) error {
 
 	// Get the FimWatcher resource with this namespace/name.
 	fw, err := fwc.fwLister.FimWatchers(namespace).Get(name)
+	// The FimWatcher resource may no longer exist, in which case we stop
+	// processing.
+	if errorsutil.IsNotFound(err) {
+		// @TODO: cleanup: delete annotations from any pods that have them
+		runtime.HandleError(fmt.Errorf("%v '%s' in work queue no longer exists", fwc.Kind, key))
+		fwc.expectations.DeleteExpectations(key)
+		return nil
+	}
 	if err != nil {
-		// The FimWatcher resource may no longer exist, in which case we stop
-		// processing.
-		if errorsutil.IsNotFound(err) {
-			// @TODO: cleanup: delete annotations from any pods that have them
-			runtime.HandleError(fmt.Errorf("FimWatcher '%s' in work queue no longer exists", key))
-			return nil
-		}
 		return err
 	}
 
@@ -904,6 +908,11 @@ func (fwc *FimWatcherController) updatePodOnceValid(podName string, fw *fimv1alp
 
 	fwc.removePodFromUpdateQueue(podName)
 
+	fwKey, err := controller.KeyFunc(fw)
+	if err != nil {
+		return
+	}
+	fwc.expectations.CreationObserved(fwKey)
 	fwc.recorder.Eventf(fw, corev1.EventTypeNormal, SuccessAdded, MessageResourceAdded, nodeName)
 }
 

@@ -64,6 +64,9 @@ const (
 	podIP       = "fakepod"
 
 	epName = "fakeendpoint"
+
+	interval = 100 * time.Millisecond
+	timeout  = 60 * time.Second
 )
 
 var (
@@ -93,7 +96,7 @@ type fixture struct {
 	// Actions expected to happen on the client.
 	kubeactions []core.Action
 	actions     []core.Action
-	//// Objects from here preloaded into NewSimpleFake.
+	// Objects from here preloaded into NewSimpleFake.
 	kubeobjects []runtime.Object
 	objects     []runtime.Object
 }
@@ -271,13 +274,24 @@ func newEndpoint(name string, pod *corev1.Pod) *corev1.Endpoints {
 	}
 }
 
-func stubGetWatchState(ctrl *gomock.Controller, ret *pb.FimdHandle) *FimdConnection {
+func newMockFimdClient(ctrl *gomock.Controller) *FimdConnection {
+	client := pbmock.NewMockFimdClient(ctrl)
+	return NewFimdConnection(fwHostURL, client)
+}
+
+func stubGetWatchState(ctrl *gomock.Controller, conn *FimdConnection, ret *pb.FimdHandle) {
+	var client *pbmock.MockFimdClient
+	client = conn.client.(*pbmock.MockFimdClient)
 	stream := pbmock.NewMockFimd_GetWatchStateClient(ctrl)
 	stream.EXPECT().Recv().Return(ret, nil)
 	stream.EXPECT().Recv().Return(nil, io.EOF)
-	client := pbmock.NewMockFimdClient(ctrl)
 	client.EXPECT().GetWatchState(gomock.Any(), gomock.Any()).Return(stream, nil)
-	return NewFimdConnection(fwHostURL, client)
+}
+
+func stubCreateWatch(ctrl *gomock.Controller, conn *FimdConnection, ret *pb.FimdHandle) {
+	var client *pbmock.MockFimdClient
+	client = conn.client.(*pbmock.MockFimdClient)
+	client.EXPECT().CreateWatch(gomock.Any(), gomock.Any()).Return(ret, nil)
 }
 
 func (f *fixture) runController(fwc *FimWatcherController, fwKey string, expectError bool) {
@@ -384,6 +398,23 @@ func filterInformerActions(actions []core.Action) []core.Action {
 		ret = append(ret, action)
 	}
 	return ret
+}
+
+func (f *fixture) syncHandler_SendFimWatcherName(fwc *FimWatcherController, fw *fimv1alpha1.FimWatcher,
+	received chan string) func(key string) error {
+
+	return func(key string) error {
+		namespace, name, err := cache.SplitMetaNamespaceKey(key)
+		if err != nil {
+			f.t.Errorf("Error splitting key: %v", err)
+		}
+		fwSpec, err := fwc.fwLister.FimWatchers(namespace).Get(name)
+		if err != nil {
+			f.t.Errorf("Expected to find fim watcher under key %v: %v", key, err)
+		}
+		received <- fwSpec.Name
+		return nil
+	}
 }
 
 func (f *fixture) syncHandler_CheckFimWatcherSynced(fwc *FimWatcherController, fw *fimv1alpha1.FimWatcher,
@@ -505,7 +536,8 @@ func TestLocalFimdConnection(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	fc := stubGetWatchState(ctrl, &pb.FimdHandle{})
+	fc := newMockFimdClient(ctrl)
+	stubGetWatchState(ctrl, fc, &pb.FimdHandle{})
 	fwc := f.newFimWatcherController(nil, nil, fc)
 
 	f.expectUpdateFimWatcherStatusAction(fw)
@@ -554,7 +586,45 @@ func TestWatchControllers(t *testing.T) {
 	}
 }
 
-// @TODO: updateFimWatcher
+func TestUpdateControllers(t *testing.T) {
+	f := newFixture(t)
+	fw1 := newFimWatcher("foo", fwMatchedLabel)
+	fw2 := *fw1
+	fw2.Name = "bar"
+	f.fwLister = append(f.fwLister, fw1, &fw2)
+	f.objects = append(f.objects, fw1, &fw2)
+	pod := newPod("bar", fw1, corev1.PodRunning, true, false)
+	f.podLister = append(f.podLister, pod)
+	f.kubeobjects = append(f.kubeobjects, pod)
+	fwc := f.newFimWatcherController(nil, nil, nil)
+
+	received := make(chan string)
+	fwc.syncHandler = f.syncHandler_SendFimWatcherName(fwc, fw1, received)
+
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+
+	go wait.Until(fwc.runWorker, 10*time.Millisecond, stopCh)
+
+	fw2.Spec.LogFormat = "{foo} {bar}"
+	fw2.Spec.Subjects = []*fimv1alpha1.FimWatcherSubject{{
+		Paths:  []string{"/foo"},
+		Events: []string{"bar"},
+	}}
+	fwc.updateFimWatcher(fw1, &fw2)
+	expected := sets.NewString(fw2.Name)
+	for _, name := range expected.List() {
+		t.Logf("Expecting update for %+v", name)
+		select {
+		case got := <-received:
+			if !expected.Has(got) {
+				t.Errorf("Expected keys %#v got %v", expected, got)
+			}
+		case <-time.After(wait.ForeverTestTimeout):
+			t.Errorf("Expected update notifications for fim watchers")
+		}
+	}
+}
 
 func TestWatchPods(t *testing.T) {
 	f := newFixture(t)
@@ -676,19 +746,7 @@ func TestUpdatePods(t *testing.T) {
 	fwc := f.newFimWatcherController(nil, nil, nil)
 
 	received := make(chan string)
-
-	fwc.syncHandler = func(key string) error {
-		namespace, name, err := cache.SplitMetaNamespaceKey(key)
-		if err != nil {
-			t.Errorf("Error splitting key: %v", err)
-		}
-		fwSpec, err := fwc.fwLister.FimWatchers(namespace).Get(name)
-		if err != nil {
-			t.Errorf("Expected to find fim watcher under key %v: %v", key, err)
-		}
-		received <- fwSpec.Name
-		return nil
-	}
+	fwc.syncHandler = f.syncHandler_SendFimWatcherName(fwc, fw1, received)
 
 	stopCh := make(chan struct{})
 	defer close(stopCh)
@@ -833,6 +891,21 @@ func TestControllerUpdateRequeue(t *testing.T) {
 	}
 }
 
+func TestControllerUpdateWithFailure(t *testing.T) {
+	f := newFixture(t)
+	fw := newFimWatcher("foo", fwMatchedLabel)
+	f.fwLister = append(f.fwLister, fw)
+	f.objects = append(f.objects, fw)
+	fwc := f.newFimWatcherController(nil, nil, nil)
+
+	fwc.workqueue.AddRateLimited(nil)
+	fwc.processNextWorkItem()
+	// It should have errored.
+	if got, want := fwc.workqueue.Len(), 0; got != want {
+		t.Errorf("queue.Len() = %v, want %v", got, want)
+	}
+}
+
 func TestControllerUpdateStatusWithFailure(t *testing.T) {
 	f := newFixture(t)
 	fw := newFimWatcher("foo", fwMatchedLabel)
@@ -858,7 +931,6 @@ func TestControllerUpdateStatusWithFailure(t *testing.T) {
 	f.verifyActions()
 }
 
-/*
 // TestFWSyncExpectations tests that a pod cannot sneak in between counting active pods
 // and checking expectations.
 func TestFWSyncExpectations(t *testing.T) {
@@ -880,54 +952,68 @@ func TestFWSyncExpectations(t *testing.T) {
 		},
 	})
 	f.expectUpdateFimWatcherStatusAction(fw)
-	//fwc.syncFimWatcher(GetKey(fw, t))
-	f.runController(fwc, GetKey(fw, t), false)
+	fwc.syncFimWatcher(GetKey(fw, t))
 }
 
 func TestDeleteControllerAndExpectations(t *testing.T) {
 	f := newFixture(t)
-	fwc := f.newFimWatcherController(nil, nil, nil)
-
 	fw := newFimWatcher("foo", fwMatchedLabel)
-	f.fiminformers.Fimcontroller().V1alpha1().FimWatchers().Informer().GetIndexer().Add(fw)
+	f.fwLister = append(f.fwLister, fw)
+	f.objects = append(f.objects, fw)
+	pod := newPod("bar", fw, corev1.PodRunning, true, true)
+	daemon := newDaemonPod("baz", fw)
+	ep := newEndpoint(fimdService, daemon)
+	f.podLister = append(f.podLister, pod, daemon)
+	f.endpointsLister = append(f.endpointsLister, ep)
+	f.kubeobjects = append(f.kubeobjects, pod, daemon, ep)
 
-	// This should set expectations for the FimWatcher
-	f.expectCreateFimWatcherAction(fw)
-	f.expectUpdateFimWatcherStatusAction(fw)
-	//fwc.syncFimWatcher(GetKey(fw, t))
-	f.runController(fwc, GetKey(fw, t), false)
-	f.resetActions()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	fc := newMockFimdClient(ctrl)
+	stubGetWatchState(ctrl, fc, &pb.FimdHandle{})
+	fwc := f.newFimWatcherController(nil, nil, fc)
 
-	// Get the FimWatcher key
+	stubCreateWatch(ctrl, fc, &pb.FimdHandle{NodeName: podNodeName})
+	// This should set expestubGetWatchStatectations for the FimWatcher
+	fwc.syncFimWatcher(GetKey(fw, t))
+
+	// Get the FimWatcher key.
 	fwKey, err := controller.KeyFunc(fw)
 	if err != nil {
 		t.Errorf("Couldn't get key for object %#v: %v", fw, err)
 	}
+
+	// Wait for sync, CreationObserved via RetryOnConflict loop.
+	if err := wait.PollImmediate(interval, timeout, func() (bool, error) {
+		_, err := fwc.kubeclientset.CoreV1().Pods(pod.Namespace).Get(pod.Name, metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
+		podExp, _, err := fwc.expectations.GetExpectations(fwKey)
+		return podExp.Fulfilled(), err
+	}); err != nil {
+		t.Errorf("No expectations found for FimWatcher")
+	}
+
 	// This is to simulate a concurrent addPod, that has a handle on the expectations
 	// as the controller deletes it.
 	podExp, exists, err := fwc.expectations.GetExpectations(fwKey)
 	if !exists || err != nil {
 		t.Errorf("No expectations found for FimWatcher")
 	}
-	f.fiminformers.Fimcontroller().V1alpha1().FimWatchers().Informer().GetIndexer().Delete(fw)
-	f.expectDeleteFimWatcherAction(fw)
-	f.expectUpdateFimWatcherStatusAction(fw)
-	//fwc.syncFimWatcher(GetKey(fw, t))
-	f.runController(fwc, GetKey(fw, t), false)
-	f.resetActions()
 
-	if _, exists, err = fwc.expectations.GetExpectations(fwKey); exists {
+	f.fiminformers.Fimcontroller().V1alpha1().FimWatchers().Informer().GetIndexer().Delete(fw)
+	fwc.syncFimWatcher(GetKey(fw, t))
+	//if _, exists, err = fwc.expectations.GetExpectations(fwKey); exists {
+	if !podExp.Fulfilled() {
 		t.Errorf("Found expectations, expected none since the FimWatcher has been deleted.")
 	}
 
 	// This should have no effect, since we've deleted the FimWatcher.
 	podExp.Add(-1, 0)
 	f.kubeinformers.Core().V1().Pods().Informer().GetIndexer().Replace(make([]interface{}, 0), "0")
-	f.expectUpdateFimWatcherStatusAction(fw)
-	//fwc.syncFimWatcher(GetKey(fw, t))
-	f.runController(fwc, GetKey(fw, t), false)
+	fwc.syncFimWatcher(GetKey(fw, t))
 }
-*/
 
 func TestDeletionTimestamp(t *testing.T) {
 	f := newFixture(t)
@@ -1221,5 +1307,93 @@ func TestGetPodKeys(t *testing.T) {
 				t.Errorf("%s: unexpected keys for pods to delete, expected %v, got %v", test.name, test.expectedPodKeys, podKeys)
 			}
 		}
+	}
+}
+
+// @TODO: updatePodOnceValid
+
+func TestGetHostURL(t *testing.T) {
+	f := newFixture(t)
+	fw := newFimWatcher("foo", fwMatchedLabel)
+	pod := newPod("bar", fw, corev1.PodRunning, true, false)
+	f.podLister = append(f.podLister, pod)
+	f.kubeobjects = append(f.kubeobjects, pod)
+	fwc := f.newFimWatcherController(nil, nil, nil)
+
+	if hostURL, err := fwc.getHostURL(pod); err == nil {
+		f.t.Errorf("expected hostURL to be in error state: %v", hostURL)
+	}
+	pod.Status.PodIP = podIP
+	if hostURL, err := fwc.getHostURL(pod); err == nil {
+		t.Errorf("expected hostURL to be in error state: %v", hostURL)
+	}
+
+	daemon := newDaemonPod("baz", fw)
+	ep := newEndpoint(fimdService, daemon)
+	f.kubeinformers.Core().V1().Endpoints().Informer().GetIndexer().Add(ep)
+	if hostURL, err := fwc.getHostURL(pod); err == nil {
+		t.Errorf("expected hostURL to be in error state: %v", hostURL)
+	}
+	ep.Subsets[0].Addresses[0].TargetRef.Name = pod.Name
+	if hostURL, err := fwc.getHostURL(pod); err != nil {
+		t.Errorf("expected hostURL to be valid: %v", hostURL)
+	}
+}
+
+func TestGetHostURLFromSiblingPod(t *testing.T) {
+	f := newFixture(t)
+	fw := newFimWatcher("foo", fwMatchedLabel)
+	pod := newPod("bar", fw, corev1.PodRunning, true, false)
+	f.podLister = append(f.podLister, pod)
+	f.kubeobjects = append(f.kubeobjects, pod)
+	fwc := f.newFimWatcherController(nil, nil, nil)
+
+	if hostURL, err := fwc.getHostURLFromSiblingPod(pod); err == nil {
+		t.Errorf("expected hostURL to be in error state: %v", hostURL)
+	}
+	pod.Status.PodIP = podIP
+	if hostURL, err := fwc.getHostURLFromSiblingPod(pod); err == nil {
+		t.Errorf("expected hostURL to be in error state: %v", hostURL)
+	}
+
+	daemon := newDaemonPod("baz", fw)
+	ep := newEndpoint(fimdService, daemon)
+	f.kubeinformers.Core().V1().Pods().Informer().GetIndexer().Add(daemon)
+	f.kubeinformers.Core().V1().Endpoints().Informer().GetIndexer().Add(ep)
+	if hostURL, err := fwc.getHostURLFromSiblingPod(pod); err != nil {
+		t.Errorf("expected hostURL to be valid: %v", hostURL)
+	}
+}
+
+// @TODO: getFimWatcherSubjects
+
+func TestWatchStates(t *testing.T) {
+	f := newFixture(t)
+	fw := newFimWatcher("foo", fwMatchedLabel)
+	f.fwLister = append(f.fwLister, fw)
+	f.objects = append(f.objects, fw)
+	pod := newPod("bar", fw, corev1.PodRunning, true, true)
+	daemon := newDaemonPod("baz", fw)
+	ep := newEndpoint(fimdService, daemon)
+	f.podLister = append(f.podLister, pod, daemon)
+	f.endpointsLister = append(f.endpointsLister, ep)
+	f.kubeobjects = append(f.kubeobjects, pod, daemon, ep)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	fc := newMockFimdClient(ctrl)
+	stubGetWatchState(ctrl, fc, &pb.FimdHandle{PodName: daemon.Name})
+	fwc := f.newFimWatcherController(nil, nil, fc)
+
+	watchStates, _ := fwc.getWatchStates()
+	if got, want := len(watchStates), 1; got != want {
+		t.Errorf("unexpected watch states, expected %v, got %v", want, got)
+	}
+
+	if fwc.isPodInWatchState(pod, watchStates) == true {
+		t.Errorf("did not expect pod to be in watch states: %v", pod.Name)
+	}
+	if fwc.isPodInWatchState(daemon, watchStates) == false {
+		t.Errorf("expected pod to be in watch states: %v", daemon.Name)
 	}
 }
