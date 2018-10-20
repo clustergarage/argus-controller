@@ -113,10 +113,19 @@ type updatePodFunc func(pod *corev1.Pod) error
 func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1alpha1.FimWatcher,
 	newStatus fimv1alpha1.FimWatcherStatus) (*fimv1alpha1.FimWatcher, error) {
 
-	if fw.Status.ObservablePods == newStatus.ObservablePods {
+	// This is the steady state. It happens when the FimWatcher doesn't have any
+	// expectations, since we do a periodic relist every 30s. If the generations
+	// differ but the subjects are the same, a caller might have resized to the
+	// same subject count.
+	if fw.Status.ObservablePods == newStatus.ObservablePods &&
+		fw.Generation == fw.Status.ObservedGeneration {
 		return fw, nil
 	}
-	//newStatus.ObservedGeneration = fw.Generation
+	// Save the generation number we acted on, otherwise we might wrongfully
+	// indicate that we've seen a spec update when we retry.
+	// TODO: This can clobber an update if we allow multiple agents to write to
+	// the same status.
+	newStatus.ObservedGeneration = fw.Generation
 
 	var getErr, updateErr error
 	var updatedFW *fimv1alpha1.FimWatcher
@@ -124,19 +133,15 @@ func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1al
 		glog.V(4).Infof(fmt.Sprintf("Updating status for %v: %s/%s, ", fw.Kind, fw.Namespace, fw.Name) +
 			fmt.Sprintf("observable pods %d->%d", fw.Status.ObservablePods, newStatus.ObservablePods))
 
-		// NEVER modify objects from the store. It's a read-only, local cache.
-		// You can use DeepCopy() to make a deep copy of original object and
-		// modify this copy or create a copy manually for better performance.
-		fwCopy := fw.DeepCopy()
 		// If the CustomResourceSubresources feature gate is not enabled, we
 		// must use Update instead of UpdateStatus to update the Status block
 		// of the FimWatcher resource.
 		// UpdateStatus will not allow changes to the Spec of the resource,
 		// which is ideal for ensuring nothing other than resource status has
 		// been updated.
-		fwCopy.Status.ObservablePods = newStatus.ObservablePods
+		fw.Status.ObservablePods = newStatus.ObservablePods
 
-		updatedFW, updateErr = c.UpdateStatus(fwCopy)
+		updatedFW, updateErr = c.UpdateStatus(fw)
 		if updateErr == nil {
 			return updatedFW, nil
 		}

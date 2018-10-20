@@ -537,7 +537,7 @@ func (fwc *FimWatcherController) processNextWorkItem() bool {
 	}(obj)
 
 	if err != nil {
-		runtime.HandleError(fmt.Errorf("Sync %q failed with %v", obj, err))
+		runtime.HandleError(err)
 		fwc.workqueue.AddRateLimited(obj)
 		return true
 	}
@@ -720,8 +720,7 @@ func (fwc *FimWatcherController) syncFimWatcher(key string) error {
 	}
 
 	var manageSubjectsErr error
-	if fwNeedsSync &&
-		fw.DeletionTimestamp == nil ||
+	if (fwNeedsSync && fw.DeletionTimestamp == nil) ||
 		len(rmPods) > 0 ||
 		len(addPods) > 0 {
 		manageSubjectsErr = fwc.manageObserverPods(rmPods, addPods, fw)
@@ -735,10 +734,6 @@ func (fwc *FimWatcherController) syncFimWatcher(key string) error {
 	if err != nil {
 		// Multiple things could lead to this update failing. Requeuing the fim watcher ensures
 		// Returning an error causes a requeue without forcing a hotloop.
-		return err
-	}
-	_, err = fwc.fimclientset.FimcontrollerV1alpha1().FimWatchers(fw.Namespace).Update(updatedFW)
-	if err != nil {
 		return err
 	}
 

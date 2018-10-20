@@ -521,7 +521,6 @@ func TestSyncFimWatcherDoesNothing(t *testing.T) {
 	f.kubeobjects = append(f.kubeobjects, pod)
 	fwc := f.newFimWatcherController(nil, nil, nil)
 
-	f.expectUpdateFimWatcherStatusAction(fw)
 	f.runController(fwc, GetKey(fw, t), false)
 }
 
@@ -540,7 +539,6 @@ func TestLocalFimdConnection(t *testing.T) {
 	stubGetWatchState(ctrl, fc, &pb.FimdHandle{})
 	fwc := f.newFimWatcherController(nil, nil, fc)
 
-	f.expectUpdateFimWatcherStatusAction(fw)
 	f.runController(fwc, GetKey(fw, t), false)
 }
 
