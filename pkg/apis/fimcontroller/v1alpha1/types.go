@@ -36,7 +36,9 @@ type FimWatcherSubject struct {
 // FimWatcherStatus is the status for a FimWatcher resource
 type FimWatcherStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration"`
-	ObservablePods     int32 `json:"observablePods"`
+
+	ObservablePods int32 `json:"observablePods"`
+	WatchedPods    int32 `json:"watchedPods"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

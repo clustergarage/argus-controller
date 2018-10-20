@@ -5,40 +5,30 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	//"net/http/httptest"
-	//"net/url"
 	"reflect"
-	//"strings"
-	//"sync"
 	"testing"
 	"time"
 
-	//appsv1 "k8s.io/api/apps/v1"
+	gomock "github.com/golang/mock/gomock"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	//"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/diff"
 	"k8s.io/apimachinery/pkg/util/sets"
-	//"k8s.io/apimachinery/pkg/util/uuid"
-	gomock "github.com/golang/mock/gomock"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 	kubeinformers "k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
 	kubefake "k8s.io/client-go/kubernetes/fake"
-	"k8s.io/client-go/util/retry"
-	//restclient "k8s.io/client-go/rest"
 	core "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
-	//utiltesting "k8s.io/client-go/util/testing"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/kubernetes/pkg/controller"
 	. "k8s.io/kubernetes/pkg/controller/testutil"
-	//"k8s.io/kubernetes/pkg/securitycontext"
 
 	fimv1alpha1 "clustergarage.io/fim-controller/pkg/apis/fimcontroller/v1alpha1"
 	fimclientset "clustergarage.io/fim-controller/pkg/client/clientset/versioned"
@@ -55,7 +45,6 @@ const (
 	fwVersion  = "v1alpha1"
 	fwResource = "fimwatchers"
 	fwKind     = "FimWatcher"
-	fwName     = "fim-watcher"
 	fwHostURL  = "fakeurl:50051"
 
 	podVersion  = "v1"
@@ -73,7 +62,6 @@ const (
 var (
 	fwMatchedLabel    = map[string]string{"foo": "bar"}
 	fwNonMatchedLabel = map[string]string{"foo": "baz"}
-	fwDaemonLabel     = map[string]string{"foo": "baz"}
 
 	fwAnnotated = func(fw *fimv1alpha1.FimWatcher) map[string]string {
 		return map[string]string{FimWatcherAnnotationKey: fw.Name}
@@ -143,7 +131,6 @@ func (f *fixture) newFimWatcherController(kubeclient clientset.Interface, client
 
 func (f *fixture) updateInformers() {
 	var items []interface{}
-
 	for _, p := range f.podLister {
 		items = append(items, p)
 	}
@@ -176,18 +163,6 @@ func (f *fixture) waitForPodExpectationFulfillment(fwc *FimWatcherController, fw
 	}
 }
 
-//func skipListerFn(verb string, url url.URL) bool {
-//	if verb != "GET" {
-//		return false
-//	}
-//	if strings.HasSuffix(url.Path, "/pods") ||
-//		strings.HasSuffix(url.Path, "/endpoints") ||
-//		strings.Contains(url.Path, "/fimwatchers") {
-//		return true
-//	}
-//	return false
-//}
-
 func newFimWatcher(name string, selectorMap map[string]string) *fimv1alpha1.FimWatcher {
 	return &fimv1alpha1.FimWatcher{
 		TypeMeta: metav1.TypeMeta{
@@ -200,8 +175,6 @@ func newFimWatcher(name string, selectorMap map[string]string) *fimv1alpha1.FimW
 		},
 		Spec: fimv1alpha1.FimWatcherSpec{
 			Selector: &metav1.LabelSelector{MatchLabels: selectorMap},
-			//Subjects: ,
-			//LogFormat: ,
 		},
 	}
 }
@@ -470,14 +443,6 @@ func (f *fixture) expectUpdateFimWatcherStatusAction(fw *fimv1alpha1.FimWatcher)
 	f.actions = append(f.actions, action)
 }
 
-func (f *fixture) expectCreateFimWatcherAction(fw *fimv1alpha1.FimWatcher) {
-	f.actions = append(f.actions, core.NewCreateAction(schema.GroupVersionResource{
-		Group:    fwGroup,
-		Resource: fwResource,
-		Version:  fwVersion,
-	}, fw.Namespace, fw))
-}
-
 func (f *fixture) expectGetFimWatcherAction(fw *fimv1alpha1.FimWatcher) {
 	f.actions = append(f.actions, core.NewGetAction(schema.GroupVersionResource{
 		Group:    fwGroup,
@@ -494,21 +459,6 @@ func (f *fixture) expectUpdateFimWatcherAction(fw *fimv1alpha1.FimWatcher) {
 	}, fw.Namespace, fw)
 	action.Subresource = "status"
 	f.actions = append(f.actions, action)
-}
-
-func (f *fixture) expectDeleteFimWatcherAction(fw *fimv1alpha1.FimWatcher) {
-	f.actions = append(f.actions, core.NewDeleteAction(schema.GroupVersionResource{
-		Group:    fwGroup,
-		Resource: fwResource,
-		Version:  fwVersion,
-	}, fw.Namespace, fw.Name))
-}
-
-func (f *fixture) expectUpdatePodAction(pod *corev1.Pod) {
-	f.kubeactions = append(f.kubeactions, core.NewUpdateAction(schema.GroupVersionResource{
-		Version:  podVersion,
-		Resource: podResource,
-	}, pod.Namespace, pod))
 }
 
 type FakeFWExpectations struct {

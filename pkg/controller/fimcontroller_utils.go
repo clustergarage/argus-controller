@@ -109,29 +109,33 @@ func (fc *FimdConnection) GetWatchState() ([]*pb.FimdHandle, error) {
 // updatePodWithRetries.
 type updatePodFunc func(pod *corev1.Pod) error
 
-// updateFimWatcherStatus updates the status of the specified FimWatcher object.
+// updateFimWatcherStatus updates the status of the specified FimWatcher
+// object.
 func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1alpha1.FimWatcher,
 	newStatus fimv1alpha1.FimWatcherStatus) (*fimv1alpha1.FimWatcher, error) {
 
-	// This is the steady state. It happens when the FimWatcher doesn't have any
-	// expectations, since we do a periodic relist every 30s. If the generations
-	// differ but the subjects are the same, a caller might have resized to the
-	// same subject count.
+	// This is the steady state. It happens when the FimWatcher doesn't have
+	// any expectations, since we do a periodic relist every 30s. If the
+	// generations differ but the subjects are the same, a caller might have
+	// resized to the same subject count.
 	if fw.Status.ObservablePods == newStatus.ObservablePods &&
+		fw.Status.WatchedPods == newStatus.WatchedPods &&
 		fw.Generation == fw.Status.ObservedGeneration {
 		return fw, nil
 	}
 	// Save the generation number we acted on, otherwise we might wrongfully
 	// indicate that we've seen a spec update when we retry.
-	// TODO: This can clobber an update if we allow multiple agents to write to
-	// the same status.
+	// @TODO: This can clobber an update if we allow multiple agents to write
+	// to the same status.
 	newStatus.ObservedGeneration = fw.Generation
 
 	var getErr, updateErr error
 	var updatedFW *fimv1alpha1.FimWatcher
 	for i, fw := 0, fw; ; i++ {
 		glog.V(4).Infof(fmt.Sprintf("Updating status for %v: %s/%s, ", fw.Kind, fw.Namespace, fw.Name) +
-			fmt.Sprintf("observable pods %d->%d", fw.Status.ObservablePods, newStatus.ObservablePods))
+			fmt.Sprintf("observed generation %d->%d, ", fw.Status.ObservedGeneration, fw.Generation) +
+			fmt.Sprintf("observable pods %d->%d, ", fw.Status.ObservablePods, newStatus.ObservablePods) +
+			fmt.Sprintf("watched pods %d->%d", fw.Status.WatchedPods, newStatus.WatchedPods))
 
 		// If the CustomResourceSubresources feature gate is not enabled, we
 		// must use Update instead of UpdateStatus to update the Status block
@@ -139,20 +143,22 @@ func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1al
 		// UpdateStatus will not allow changes to the Spec of the resource,
 		// which is ideal for ensuring nothing other than resource status has
 		// been updated.
-		fw.Status.ObservablePods = newStatus.ObservablePods
-
+		fw.Status = newStatus
 		updatedFW, updateErr = c.UpdateStatus(fw)
 		if updateErr == nil {
 			return updatedFW, nil
 		}
-		// Stop retrying if we exceed statusUpdateRetries - the fim watcher will be requeued with a rate limit.
+		// Stop retrying if we exceed statusUpdateRetries - the fim watcher
+		// will be requeued with a rate limit.
 		if i >= statusUpdateRetries {
 			break
 		}
-		// Update the FimWatcher with the latest resource version for the next poll
+		// Update the FimWatcher with the latest resource version for the next
+		// poll.
 		if fw, getErr = c.Get(fw.Name, metav1.GetOptions{}); getErr != nil {
-			// If the GET fails we can't trust status.ObservablePods anymore. This error
-			// is bound to be more interesting than the update failure.
+			// If the GET fails we can't trust status.ObservablePods anymore.
+			// This error is bound to be more interesting than the update
+			// failure.
 			return nil, getErr
 		}
 	}
@@ -160,29 +166,30 @@ func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1al
 	return nil, updateErr
 }
 
-// calculateStatus creates a new status from a given FimWatcher and filteredPods array.
+// calculateStatus creates a new status from a given FimWatcher and
+// filteredPods array.
 func calculateStatus(fw *fimv1alpha1.FimWatcher, filteredPods []*corev1.Pod, manageFimWatchersErr error) fimv1alpha1.FimWatcherStatus {
 	newStatus := fw.Status
-	// @TODO: document this
+	newStatus.ObservablePods = int32(len(filteredPods))
+
 	// Count the number of pods that have labels matching the labels of the pod
-	// template of the fim watcher, the matching pods may have more
-	// labels than are in the template. Because the label of podTemplateSpec is
-	// a superset of the selector of the fim watcher, so the possible
-	// matching pods must be part of the filteredPods.
-	observablePodsCount := 0
+	// template of the fim watcher, the matching pods may have more labels than
+	// are in the template. Because the label of podTemplateSpec is a superset
+	// of the selector of the fim watcher, so the possible matching pods must
+	// be part of the filteredPods.
+	watchedPods := 0
 	for _, pod := range filteredPods {
 		if _, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found {
-			observablePodsCount++
+			watchedPods++
 		}
 	}
-	// @FIXME
-	newStatus.ObservablePods = int32(observablePodsCount) //int32(observablePodsCount*len(fw.Spec.Subjects))
+	newStatus.WatchedPods = int32(watchedPods)
 	return newStatus
 }
 
-// updateAnnotations takes an array of annotations to remove or add and an object
-// to apply this update to; this will modify the object's Annotations map by way
-// of an Accessor.
+// updateAnnotations takes an array of annotations to remove or add and an
+// object to apply this update to; this will modify the object's Annotations
+// map by way of an Accessor.
 func updateAnnotations(removeAnnotations []string, newAnnotations map[string]string, obj runtime.Object) error {
 	accessor, err := meta.Accessor(obj)
 	if err != nil {
@@ -223,8 +230,8 @@ func updatePodWithRetries(podClient coreclient.PodInterface, podLister coreliste
 		return err
 	})
 
-	// Ignore the precondition violated error, this pod is already updated
-	// with the desired label.
+	// Ignore the precondition violated error, this pod is already updated with
+	// the desired label.
 	if retryErr == errorsutil.ErrPreconditionViolated {
 		glog.Infof("Pod %s/%s precondition doesn't hold, skip updating it.", namespace, name)
 		retryErr = nil

@@ -74,7 +74,7 @@ func main() {
 	flag.Parse()
 	defer glog.Flush()
 
-	// set up signals so we handle the first shutdown signal gracefully
+	// Set up signals so we handle the first shutdown signal gracefully.
 	stopCh := signals.SetupSignalHandler()
 
 	kubeclientset, fimclientset := getKubernetesClient()
