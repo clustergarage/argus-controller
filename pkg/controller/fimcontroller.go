@@ -97,6 +97,9 @@ type FimWatcherController struct {
 
 	// Allow injection of syncFimWatcher.
 	syncHandler func(key string) error
+	// backoff is the backoff definition for RetryOnConflict.
+	backoff wait.Backoff
+
 	// A TTLCache of pod creates/deletes each fw expects to see.
 	expectations *controller.UIDTrackingControllerExpectations
 
@@ -188,6 +191,12 @@ func NewFimWatcherController(kubeclientset kubernetes.Interface, fimclientset cl
 	})
 
 	fwc.syncHandler = fwc.syncFimWatcher
+	fwc.backoff = wait.Backoff{
+		Steps:    10,
+		Duration: 1 * time.Second,
+		Factor:   2.0,
+		Jitter:   0.1,
+	}
 
 	// If specifying a fimdConnection for a daemon that is located out-of-cluster,
 	// initialize the fimd connection here, because we will not receive an addPod
@@ -296,12 +305,7 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 		var hostURL string
 		// Run this function with a retry, to make sure we get a connection to
 		// the daemon pod. If we exhaust all attempts, process error accordingly.
-		if retryErr := retry.RetryOnConflict(wait.Backoff{
-			Steps:    10,
-			Duration: 1 * time.Second,
-			Factor:   2.0,
-			Jitter:   0.1,
-		}, func() (err error) {
+		if retryErr := retry.RetryOnConflict(fwc.backoff, func() (err error) {
 			po, err := fwc.podLister.Pods(fimNamespace).Get(pod.Name)
 			if err != nil {
 				err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
@@ -544,82 +548,6 @@ func (fwc *FimWatcherController) processNextWorkItem() bool {
 	return true
 }
 
-// manageObserverPods checks and updates observers for the given FimWatcher.
-// It will requeue the FimWatcher in case of an error while creating/deleting pods.
-func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPods []*corev1.Pod, fw *fimv1alpha1.FimWatcher) error {
-	fwKey, err := controller.KeyFunc(fw)
-	if err != nil {
-		runtime.HandleError(fmt.Errorf("Couldn't get key for %v %#v: %v", fwc.Kind, fw, err))
-		return nil
-	}
-
-	if len(rmPods) > 0 {
-		fwc.expectations.ExpectDeletions(fwKey, getPodKeys(rmPods))
-		glog.Infof("Too many watchers for %v %s/%s, deleting %d", fwc.Kind, fw.Namespace, fw.Name, len(rmPods))
-	}
-	if len(addPods) > 0 {
-		fwc.expectations.ExpectCreations(fwKey, len(addPods))
-		glog.Infof("Too few watchers for %v %s/%s, creating %d", fwc.Kind, fw.Namespace, fw.Name, len(addPods))
-	}
-
-	var podsToUpdate []*corev1.Pod
-
-	for _, pod := range rmPods {
-		if _, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found {
-			cids := getPodContainerIDs(pod)
-			if len(cids) > 0 {
-				hostURL, err := fwc.getHostURLFromSiblingPod(pod)
-				if err != nil {
-					return err
-				}
-				fc, _, err := fwc.getFimdConnection(hostURL)
-				if err != nil {
-					return err
-				}
-				if err := fc.RemoveFimdWatcher(&pb.FimdConfig{
-					NodeName: pod.Spec.NodeName,
-					PodName:  pod.Name,
-					Pid:      fc.handle.Pid,
-				}); err != nil {
-					return err
-				}
-
-				fwc.expectations.DeletionObserved(fwKey, controller.PodKey(pod))
-				fwc.recorder.Eventf(fw, corev1.EventTypeNormal, SuccessRemoved, MessageResourceRemoved, pod.Spec.NodeName)
-			}
-		}
-
-		err := updateAnnotations([]string{FimWatcherAnnotationKey}, nil, pod)
-		if err != nil {
-			return err
-		}
-		podsToUpdate = append(podsToUpdate, pod)
-	}
-
-	for _, pod := range addPods {
-		go fwc.updatePodOnceValid(pod.Name, fw)
-
-		err := updateAnnotations(nil, map[string]string{FimWatcherAnnotationKey: fw.Name}, pod)
-		if err != nil {
-			return err
-		}
-		podsToUpdate = append(podsToUpdate, pod)
-		// Once updatePodOnceValid is called, put it in an update queue so we
-		// don't start another RetryOnConflict while one is already in effect.
-		updatePodQueue = append(updatePodQueue, pod.Name)
-	}
-
-	for _, pod := range podsToUpdate {
-		updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(pod.Namespace), fwc.podLister,
-			fw.Namespace, pod.Name, func(po *corev1.Pod) error {
-				po.Annotations = pod.Annotations
-				return nil
-			})
-	}
-
-	return nil
-}
-
 // syncFimWatcher compares the actual state with the desired, and attempts to
 // converge the two. It then updates the Status block of the FimWatcher resource
 // with the current status of the resource.
@@ -745,6 +673,86 @@ func (fwc *FimWatcherController) syncFimWatcher(key string) error {
 	return manageSubjectsErr
 }
 
+// manageObserverPods checks and updates observers for the given FimWatcher.
+// It will requeue the FimWatcher in case of an error while creating/deleting pods.
+func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPods []*corev1.Pod, fw *fimv1alpha1.FimWatcher) error {
+	fwKey, err := controller.KeyFunc(fw)
+	if err != nil {
+		runtime.HandleError(fmt.Errorf("Couldn't get key for %v %#v: %v", fwc.Kind, fw, err))
+		return nil
+	}
+
+	if len(rmPods) > 0 {
+		fwc.expectations.ExpectDeletions(fwKey, getPodKeys(rmPods))
+		glog.Infof("Too many watchers for %v %s/%s, deleting %d", fwc.Kind, fw.Namespace, fw.Name, len(rmPods))
+	}
+	if len(addPods) > 0 {
+		fwc.expectations.ExpectCreations(fwKey, len(addPods))
+		glog.Infof("Too few watchers for %v %s/%s, creating %d", fwc.Kind, fw.Namespace, fw.Name, len(addPods))
+	}
+
+	var podsToUpdate []*corev1.Pod
+
+	for _, pod := range rmPods {
+		if _, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found {
+			cids := getPodContainerIDs(pod)
+			if len(cids) > 0 {
+				hostURL, err := fwc.getHostURLFromSiblingPod(pod)
+				if err != nil {
+					return err
+				}
+				fc, _, err := fwc.getFimdConnection(hostURL)
+				if err != nil {
+					return err
+				}
+				if fc.handle == nil {
+					return fmt.Errorf("fimd connection has no handle %#v", fc)
+				}
+
+				if err := fc.RemoveFimdWatcher(&pb.FimdConfig{
+					NodeName: pod.Spec.NodeName,
+					PodName:  pod.Name,
+					Pid:      fc.handle.Pid,
+				}); err != nil {
+					return err
+				}
+
+				fwc.expectations.DeletionObserved(fwKey, controller.PodKey(pod))
+				fwc.recorder.Eventf(fw, corev1.EventTypeNormal, SuccessRemoved, MessageResourceRemoved, pod.Spec.NodeName)
+			}
+		}
+
+		err := updateAnnotations([]string{FimWatcherAnnotationKey}, nil, pod)
+		if err != nil {
+			return err
+		}
+		podsToUpdate = append(podsToUpdate, pod)
+	}
+
+	for _, pod := range addPods {
+		go fwc.updatePodOnceValid(pod.Name, fw)
+
+		err := updateAnnotations(nil, map[string]string{FimWatcherAnnotationKey: fw.Name}, pod)
+		if err != nil {
+			return err
+		}
+		podsToUpdate = append(podsToUpdate, pod)
+		// Once updatePodOnceValid is called, put it in an update queue so we
+		// don't start another RetryOnConflict while one is already in effect.
+		updatePodQueue = append(updatePodQueue, pod.Name)
+	}
+
+	for _, pod := range podsToUpdate {
+		updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(pod.Namespace), fwc.podLister,
+			fw.Namespace, pod.Name, func(po *corev1.Pod) error {
+				po.Annotations = pod.Annotations
+				return nil
+			})
+	}
+
+	return nil
+}
+
 // getPodFimWatchers returns a list of FimWatchers matching the given pod.
 func (fwc *FimWatcherController) getPodFimWatchers(pod *corev1.Pod) []*fimv1alpha1.FimWatcher {
 	if len(pod.Labels) == 0 {
@@ -807,13 +815,8 @@ func (fwc *FimWatcherController) updatePodOnceValid(podName string, fw *fimv1alp
 
 	// Run this function with a retry, to make sure we get a connection to
 	// the daemon pod. If we exhaust all attempts, process error accordingly.
-	if retryErr := retry.RetryOnConflict(wait.Backoff{
-		Steps:    10,
-		Duration: 1 * time.Second,
-		Factor:   2.0,
-		Jitter:   0.1,
-	}, func() (err error) {
-		// be sure to clear all slice elements first in case it's retrying
+	if retryErr := retry.RetryOnConflict(fwc.backoff, func() (err error) {
+		// Be sure to clear all slice elements first in case of a retry.
 		cids = cids[:0]
 
 		pod, err := fwc.podLister.Pods(fw.Namespace).Get(podName)
@@ -825,6 +828,7 @@ func (fwc *FimWatcherController) updatePodOnceValid(podName string, fw *fimv1alp
 				pod.Name, errors.New("host name/ip not available"))
 			return err
 		}
+		nodeName = pod.Spec.NodeName
 
 		for _, ctr := range pod.Status.ContainerStatuses {
 			if ctr.ContainerID == "" {
@@ -837,13 +841,6 @@ func (fwc *FimWatcherController) updatePodOnceValid(podName string, fw *fimv1alp
 		if len(pod.Spec.Containers) != len(cids) {
 			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
 				pod.Name, errors.New("available pod container count does not match ready"))
-			return err
-		}
-
-		nodeName = pod.Spec.NodeName
-		if nodeName == "" {
-			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
-				pod.Name, errors.New("pod node name is not available"))
 			return err
 		}
 
@@ -860,12 +857,7 @@ func (fwc *FimWatcherController) updatePodOnceValid(podName string, fw *fimv1alp
 
 	// Run this function with a retry, to make sure we get a successful response
 	// from the daemon. If we exhaust all attempts, process error accordingly.
-	if retryErr := retry.RetryOnConflict(wait.Backoff{
-		Steps:    10,
-		Duration: 1 * time.Second,
-		Factor:   2.0,
-		Jitter:   0.1,
-	}, func() (err error) {
+	if retryErr := retry.RetryOnConflict(fwc.backoff, func() (err error) {
 		pod, err := fwc.podLister.Pods(fw.Namespace).Get(podName)
 		if err != nil {
 			return err

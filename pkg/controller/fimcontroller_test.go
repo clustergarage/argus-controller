@@ -29,6 +29,7 @@ import (
 	kubeinformers "k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
 	kubefake "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/util/retry"
 	//restclient "k8s.io/client-go/rest"
 	core "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
@@ -134,6 +135,7 @@ func (f *fixture) newFimWatcherController(kubeclient clientset.Interface, client
 	fwc.podListerSynced = alwaysReady
 	fwc.endpointsListerSynced = alwaysReady
 	fwc.recorder = &record.FakeRecorder{}
+	fwc.backoff = retry.DefaultBackoff
 
 	f.updateInformers()
 	return fwc
@@ -158,6 +160,20 @@ func (f *fixture) updateInformers() {
 		items = append(items, p)
 	}
 	f.fiminformers.Fimcontroller().V1alpha1().FimWatchers().Informer().GetIndexer().Replace(items, "")
+}
+
+func (f *fixture) waitForPodExpectationFulfillment(fwc *FimWatcherController, fwKey string, pod *corev1.Pod) {
+	// Wait for sync, CreationObserved via RetryOnConflict loop.
+	if err := wait.PollImmediate(interval, timeout, func() (bool, error) {
+		_, err := fwc.kubeclientset.CoreV1().Pods(pod.Namespace).Get(pod.Name, metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
+		podExp, _, err := fwc.expectations.GetExpectations(fwKey)
+		return podExp.Fulfilled(), err
+	}); err != nil {
+		f.t.Errorf("No expectations found for FimWatcher")
+	}
 }
 
 //func skipListerFn(verb string, url url.URL) bool {
@@ -292,6 +308,12 @@ func stubCreateWatch(ctrl *gomock.Controller, conn *FimdConnection, ret *pb.Fimd
 	var client *pbmock.MockFimdClient
 	client = conn.client.(*pbmock.MockFimdClient)
 	client.EXPECT().CreateWatch(gomock.Any(), gomock.Any()).Return(ret, nil)
+}
+
+func stubDestroyWatch(ctrl *gomock.Controller, conn *FimdConnection) {
+	var client *pbmock.MockFimdClient
+	client = conn.client.(*pbmock.MockFimdClient)
+	client.EXPECT().DestroyWatch(gomock.Any(), gomock.Any()).Return(&pb.Empty{}, nil)
 }
 
 func (f *fixture) runController(fwc *FimWatcherController, fwKey string, expectError bool) {
@@ -929,9 +951,9 @@ func TestControllerUpdateStatusWithFailure(t *testing.T) {
 	f.verifyActions()
 }
 
-// TestFWSyncExpectations tests that a pod cannot sneak in between counting active pods
+// TestFimWatcherSyncExpectations tests that a pod cannot sneak in between counting active pods
 // and checking expectations.
-func TestFWSyncExpectations(t *testing.T) {
+func TestFimWatcherSyncExpectations(t *testing.T) {
 	f := newFixture(t)
 	fwc := f.newFimWatcherController(nil, nil, nil)
 
@@ -949,7 +971,63 @@ func TestFWSyncExpectations(t *testing.T) {
 			f.kubeinformers.Core().V1().Pods().Informer().GetIndexer().Add(&postExpectationsPod)
 		},
 	})
+
 	f.expectUpdateFimWatcherStatusAction(fw)
+	fwc.syncFimWatcher(GetKey(fw, t))
+}
+
+func TestFimWatcherSyncToCreateWatcher(t *testing.T) {
+	f := newFixture(t)
+	fw := newFimWatcher("foo", fwMatchedLabel)
+	f.fwLister = append(f.fwLister, fw)
+	f.objects = append(f.objects, fw)
+	pod := newPod("bar", fw, corev1.PodRunning, true, true)
+	daemon := newDaemonPod("baz", fw)
+	ep := newEndpoint(fimdService, daemon)
+	f.podLister = append(f.podLister, pod, daemon)
+	f.endpointsLister = append(f.endpointsLister, ep)
+	f.kubeobjects = append(f.kubeobjects, pod, daemon, ep)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	handle := &pb.FimdHandle{NodeName: podNodeName}
+	fc := newMockFimdClient(ctrl)
+	stubGetWatchState(ctrl, fc, handle)
+	fwc := f.newFimWatcherController(nil, nil, fc)
+
+	stubCreateWatch(ctrl, fc, handle)
+	fwc.syncFimWatcher(GetKey(fw, t))
+
+	fwKey, err := controller.KeyFunc(fw)
+	if err != nil {
+		f.t.Errorf("Couldn't get key for object %#v: %v", fw, err)
+	}
+	f.waitForPodExpectationFulfillment(fwc, fwKey, pod)
+}
+
+func TestFimWatcherSyncToDestroyWatcher(t *testing.T) {
+	f := newFixture(t)
+	fw := newFimWatcher("foo", fwMatchedLabel)
+	f.fwLister = append(f.fwLister, fw)
+	f.objects = append(f.objects, fw)
+	pod := newPod("bar", fw, corev1.PodRunning, true, true)
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{ContainerID: "abc123"}}
+	f.podLister = append(f.podLister, pod)
+	f.kubeobjects = append(f.kubeobjects, pod)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	handle := &pb.FimdHandle{
+		NodeName: podNodeName,
+		PodName:  "bar",
+	}
+	fc := newMockFimdClient(ctrl)
+	fc.handle = handle
+	stubGetWatchState(ctrl, fc, handle)
+	fwc := f.newFimWatcherController(nil, nil, fc)
+
+	stubDestroyWatch(ctrl, fc)
+	pod.DeletionTimestamp = &metav1.Time{Time: time.Now()}
 	fwc.syncFimWatcher(GetKey(fw, t))
 }
 
@@ -967,12 +1045,13 @@ func TestDeleteControllerAndExpectations(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	handle := &pb.FimdHandle{NodeName: podNodeName}
 	fc := newMockFimdClient(ctrl)
-	stubGetWatchState(ctrl, fc, &pb.FimdHandle{})
+	stubGetWatchState(ctrl, fc, handle)
 	fwc := f.newFimWatcherController(nil, nil, fc)
 
-	stubCreateWatch(ctrl, fc, &pb.FimdHandle{NodeName: podNodeName})
-	// This should set expestubGetWatchStatectations for the FimWatcher
+	stubCreateWatch(ctrl, fc, handle)
+	// This should set expectations for the FimWatcher
 	fwc.syncFimWatcher(GetKey(fw, t))
 
 	// Get the FimWatcher key.
@@ -980,18 +1059,7 @@ func TestDeleteControllerAndExpectations(t *testing.T) {
 	if err != nil {
 		t.Errorf("Couldn't get key for object %#v: %v", fw, err)
 	}
-
-	// Wait for sync, CreationObserved via RetryOnConflict loop.
-	if err := wait.PollImmediate(interval, timeout, func() (bool, error) {
-		_, err := fwc.kubeclientset.CoreV1().Pods(pod.Namespace).Get(pod.Name, metav1.GetOptions{})
-		if err != nil {
-			return false, err
-		}
-		podExp, _, err := fwc.expectations.GetExpectations(fwKey)
-		return podExp.Fulfilled(), err
-	}); err != nil {
-		t.Errorf("No expectations found for FimWatcher")
-	}
+	f.waitForPodExpectationFulfillment(fwc, fwKey, pod)
 
 	// This is to simulate a concurrent addPod, that has a handle on the expectations
 	// as the controller deletes it.
@@ -1101,10 +1169,8 @@ func TestDeletionTimestamp(t *testing.T) {
 func TestOverlappingFimWatchers(t *testing.T) {
 	f := newFixture(t)
 	// Create 10 FimWatchers, shuffled them randomly and insert them into the
-	// FimWatcher controller's store.
-	// All use the same CreationTimestamp since ControllerRef should be able
-	// to handle that.
-	timestamp := metav1.Date(2018, time.October, 0, 0, 0, 0, 0, time.Local)
+	// FimWatcher controller's store. All use the same CreationTimestamp.
+	timestamp := metav1.Date(2000, time.January, 0, 0, 0, 0, 0, time.Local)
 	var controllers []*fimv1alpha1.FimWatcher
 	for i := 1; i < 10; i++ {
 		fw := newFimWatcher(fmt.Sprintf("fw%d", i), fwMatchedLabel)
@@ -1308,7 +1374,73 @@ func TestGetPodKeys(t *testing.T) {
 	}
 }
 
-// @TODO: updatePodOnceValid
+func TestUpdatePodOnceValid(t *testing.T) {
+	f := newFixture(t)
+	fw := newFimWatcher("foo", fwMatchedLabel)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	fc := newMockFimdClient(ctrl)
+	fwc := f.newFimWatcherController(nil, nil, fc)
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "bar",
+			Namespace: fw.Namespace,
+		},
+		Spec: corev1.PodSpec{NodeName: ""},
+		Status: corev1.PodStatus{
+			HostIP:            "",
+			ContainerStatuses: []corev1.ContainerStatus{{}},
+		},
+	}
+	f.podLister = append(f.podLister, pod)
+	// Failure: host name/ip not available
+	fwc.updatePodOnceValid(pod.Name, fw)
+	if fc.handle != nil {
+		t.Errorf("expected handle to be nil: %v", fc.handle)
+	}
+
+	pod.Spec.NodeName = podNodeName
+	f.kubeinformers.Core().V1().Pods().Informer().GetIndexer().Update(pod)
+	// Failure: pod container id not available
+	fwc.updatePodOnceValid(pod.Name, fw)
+	if fc.handle != nil {
+		t.Errorf("expected handle to be nil: %v", fc.handle)
+	}
+
+	pod.Status.HostIP = podHostIP
+	f.kubeinformers.Core().V1().Pods().Informer().GetIndexer().Update(pod)
+	// Failure: available pod container count does not match ready
+	fwc.updatePodOnceValid(pod.Name, fw)
+	if fc.handle != nil {
+		t.Errorf("expected handle to be nil: %v", fc.handle)
+	}
+
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{ContainerID: "abc123"}}
+	f.kubeinformers.Core().V1().Pods().Informer().GetIndexer().Update(pod)
+	// Failure: available pod container count does not match ready
+	fwc.updatePodOnceValid(pod.Name, fw)
+	if fc.handle != nil {
+		t.Errorf("expected handle to be nil: %v", fc.handle)
+	}
+
+	pod.Spec.Containers = []corev1.Container{{Name: "baz"}}
+	pod.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	f.kubeinformers.Core().V1().Pods().Informer().GetIndexer().Update(pod)
+	// No-op: pod is being deleted
+	fwc.updatePodOnceValid(pod.Name, fw)
+
+	pod.DeletionTimestamp = nil
+	f.kubeinformers.Core().V1().Pods().Informer().GetIndexer().Update(pod)
+	handle := &pb.FimdHandle{NodeName: podNodeName}
+	stubCreateWatch(ctrl, fc, handle)
+	// Successful call to CreateWatch
+	fwc.updatePodOnceValid(pod.Name, fw)
+	if !reflect.DeepEqual(fc.handle, handle) {
+		t.Errorf("Handle does not match\nDiff:\n %s", diff.ObjectGoPrintDiff(fc.handle, handle))
+	}
+}
 
 func TestGetHostURL(t *testing.T) {
 	f := newFixture(t)
@@ -1363,7 +1495,37 @@ func TestGetHostURLFromSiblingPod(t *testing.T) {
 	}
 }
 
-// @TODO: getFimWatcherSubjects
+func TestGetFimWatcherSubjects(t *testing.T) {
+	f := newFixture(t)
+	fw := newFimWatcher("foo", fwMatchedLabel)
+	fw.Spec.Subjects = []*fimv1alpha1.FimWatcherSubject{{
+		Paths:     []string{"/foo"},
+		Events:    []string{"bar"},
+		Ignore:    []string{"/baz"},
+		OnlyDir:   true,
+		Recursive: true,
+		MaxDepth:  2,
+	}}
+	f.fwLister = append(f.fwLister, fw)
+	f.objects = append(f.objects, fw)
+	fwc := f.newFimWatcherController(nil, nil, nil)
+
+	subjects := fwc.getFimWatcherSubjects(fw)
+	if got, want := len(subjects), 1; got != want {
+		t.Errorf("unexpected watcher subjects, expected %v, got %v", want, got)
+	}
+	expSubject := &pb.FimWatcherSubject{
+		Path:      []string{"/foo"},
+		Event:     []string{"bar"},
+		Ignore:    []string{"/baz"},
+		OnlyDir:   true,
+		Recursive: true,
+		MaxDepth:  2,
+	}
+	if !reflect.DeepEqual(expSubject, subjects[0]) {
+		t.Errorf("Subject does not match\nDiff:\n %s", diff.ObjectGoPrintDiff(expSubject, subjects[0]))
+	}
+}
 
 func TestWatchStates(t *testing.T) {
 	f := newFixture(t)

@@ -209,7 +209,6 @@ func updatePodWithRetries(podClient coreclient.PodInterface, podLister coreliste
 	namespace, name string, applyUpdate updatePodFunc) (*corev1.Pod, error) {
 
 	var pod *corev1.Pod
-
 	retryErr := retry.RetryOnConflict(retry.DefaultBackoff, func() (err error) {
 		pod, err = podLister.Pods(namespace).Get(name)
 		if err != nil {
