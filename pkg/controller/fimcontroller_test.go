@@ -125,28 +125,16 @@ func (f *fixture) newFimWatcherController(kubeclient clientset.Interface, client
 	fwc.recorder = &record.FakeRecorder{}
 	fwc.backoff = retry.DefaultBackoff
 
-	f.updateInformers()
+	for _, pod := range f.podLister {
+		f.kubeinformers.Core().V1().Pods().Informer().GetIndexer().Add(pod)
+	}
+	for _, ep := range f.endpointsLister {
+		f.kubeinformers.Core().V1().Endpoints().Informer().GetIndexer().Add(ep)
+	}
+	for _, fw := range f.fwLister {
+		f.fiminformers.Fimcontroller().V1alpha1().FimWatchers().Informer().GetIndexer().Add(fw)
+	}
 	return fwc
-}
-
-func (f *fixture) updateInformers() {
-	var items []interface{}
-	for _, p := range f.podLister {
-		items = append(items, p)
-	}
-	f.kubeinformers.Core().V1().Pods().Informer().GetIndexer().Replace(items, "")
-
-	items = items[:0]
-	for _, p := range f.endpointsLister {
-		items = append(items, p)
-	}
-	f.kubeinformers.Core().V1().Endpoints().Informer().GetIndexer().Replace(items, "")
-
-	items = items[:0]
-	for _, p := range f.fwLister {
-		items = append(items, p)
-	}
-	f.fiminformers.Fimcontroller().V1alpha1().FimWatchers().Informer().GetIndexer().Replace(items, "")
 }
 
 func (f *fixture) waitForPodExpectationFulfillment(fwc *FimWatcherController, fwKey string, pod *corev1.Pod) {
@@ -157,6 +145,9 @@ func (f *fixture) waitForPodExpectationFulfillment(fwc *FimWatcherController, fw
 			return false, err
 		}
 		podExp, _, err := fwc.expectations.GetExpectations(fwKey)
+		if podExp == nil {
+			return false, err
+		}
 		return podExp.Fulfilled(), err
 	}); err != nil {
 		f.t.Errorf("No expectations found for FimWatcher")
@@ -334,8 +325,8 @@ func (f *fixture) verifyKubeActions() {
 	}
 }
 
-// checkAction verifies that expected and actual actions are equal and both have
-// same attached resources
+// checkAction verifies that expected and actual actions are equal and both
+// have same attached resources.
 func checkAction(expected, actual core.Action, t *testing.T) {
 	if !(expected.Matches(actual.GetVerb(), actual.GetResource().Resource) &&
 		actual.GetSubresource() == expected.GetSubresource()) {
@@ -395,7 +386,7 @@ func filterInformerActions(actions []core.Action) []core.Action {
 	return ret
 }
 
-func (f *fixture) syncHandler_SendFimWatcherName(fwc *FimWatcherController, fw *fimv1alpha1.FimWatcher,
+func (f *fixture) syncHandlerSendFimWatcherName(fwc *FimWatcherController, fw *fimv1alpha1.FimWatcher,
 	received chan string) func(key string) error {
 
 	return func(key string) error {
@@ -412,7 +403,7 @@ func (f *fixture) syncHandler_SendFimWatcherName(fwc *FimWatcherController, fw *
 	}
 }
 
-func (f *fixture) syncHandler_CheckFimWatcherSynced(fwc *FimWatcherController, fw *fimv1alpha1.FimWatcher,
+func (f *fixture) syncHandlerCheckFimWatcherSynced(fwc *FimWatcherController, fw *fimv1alpha1.FimWatcher,
 	received chan string) func(key string) error {
 
 	return func(key string) error {
@@ -438,8 +429,7 @@ func (f *fixture) expectUpdateFimWatcherStatusAction(fw *fimv1alpha1.FimWatcher)
 		Version:  fwVersion,
 		Resource: fwResource,
 	}, fw.Namespace, fw)
-	// TODO: Until #38113 is merged, we can't use Subresource
-	//action.Subresource = "status"
+	action.Subresource = "status"
 	f.actions = append(f.actions, action)
 }
 
@@ -527,9 +517,10 @@ func TestWatchControllers(t *testing.T) {
 
 	var fw fimv1alpha1.FimWatcher
 	received := make(chan string)
-	// The update sent through the fakeWatcher should make its way into the workqueue,
-	// and eventually into the syncHandler. The handler validates the received controller
-	// and closes the received channel to indicate that the test can finish.
+	// The update sent through the fakeWatcher should make its way into the
+	// workqueue, and eventually into the syncHandler. The handler validates
+	// the received controller and closes the received channel to indicate that
+	// the test can finish.
 	fwc.syncHandler = func(key string) error {
 		obj, exists, err := f.fiminformers.Fimcontroller().V1alpha1().FimWatchers().Informer().GetIndexer().GetByKey(key)
 		if !exists || err != nil {
@@ -569,7 +560,7 @@ func TestUpdateControllers(t *testing.T) {
 	fwc := f.newFimWatcherController(nil, nil, nil)
 
 	received := make(chan string)
-	fwc.syncHandler = f.syncHandler_SendFimWatcherName(fwc, fw1, received)
+	fwc.syncHandler = f.syncHandlerSendFimWatcherName(fwc, fw1, received)
 
 	stopCh := make(chan struct{})
 	defer close(stopCh)
@@ -607,15 +598,15 @@ func TestWatchPods(t *testing.T) {
 	fwc := f.newFimWatcherController(kubeclient, nil, nil)
 
 	received := make(chan string)
-	// The pod update sent through the fakeWatcher should figure out the managing FimWatcher and
-	// send it into the syncHandler.
-	fwc.syncHandler = f.syncHandler_CheckFimWatcherSynced(fwc, fw, received)
+	// The pod update sent through the fakeWatcher should figure out the
+	// managing FimWatcher and send it into the syncHandler.
+	fwc.syncHandler = f.syncHandlerCheckFimWatcherSynced(fwc, fw, received)
 
 	stopCh := make(chan struct{})
 	defer close(stopCh)
 
-	// Start only the pod watcher and the workqueue, send a watch event,
-	// and make sure it hits the sync method for the right FimWatcher.
+	// Start only the pod watcher and the workqueue, send a watch event, and
+	// make sure it hits the sync method for the right FimWatcher.
 	go f.kubeinformers.Core().V1().Pods().Informer().Run(stopCh)
 	go fwc.Run(1, stopCh)
 
@@ -639,28 +630,26 @@ func TestAddDaemonPod(t *testing.T) {
 	fw := newFimWatcher("foo", fwMatchedLabel)
 	f.fwLister = append(f.fwLister, fw)
 	f.objects = append(f.objects, fw)
-	pod := newPod("bar", fw, corev1.PodRunning, true, false)
-	daemon := newDaemonPod("baz", fw)
-	ep := newEndpoint(fimdService, daemon)
-	f.podLister = append(f.podLister, pod, daemon)
-	f.endpointsLister = append(f.endpointsLister, ep)
-	f.kubeobjects = append(f.kubeobjects, pod, daemon, ep)
 	fwc := f.newFimWatcherController(kubeclient, nil, nil)
 
 	received := make(chan string)
-	// The pod update sent through the fakeWatcher should figure out the managing FimWatcher and
-	// send it into the syncHandler.
-	fwc.syncHandler = f.syncHandler_CheckFimWatcherSynced(fwc, fw, received)
+	// The pod update sent through the fakeWatcher should figure out the
+	// managing FimWatcher and send it into the syncHandler.
+	fwc.syncHandler = f.syncHandlerCheckFimWatcherSynced(fwc, fw, received)
 
 	stopCh := make(chan struct{})
 	defer close(stopCh)
 
-	// Start only the pod watcher and the workqueue, send a watch event,
-	// and make sure it hits the sync method for the right FimWatcher.
+	// Start only the pod watcher and the workqueue, send a watch event, and
+	// make sure it hits the sync method for the right FimWatcher.
 	go f.kubeinformers.Core().V1().Pods().Informer().Run(stopCh)
 	go fwc.Run(1, stopCh)
 
-	fwc.addPod(daemon)
+	pod := newPod("bar", fw, corev1.PodRunning, true, true)
+	fakeWatch.Add(pod)
+
+	daemon := newDaemonPod("baz", fw)
+	fakeWatch.Add(daemon)
 
 	select {
 	case <-received:
@@ -684,15 +673,15 @@ func TestAddPodBeingDeleted(t *testing.T) {
 	fwc := f.newFimWatcherController(kubeclient, nil, nil)
 
 	received := make(chan string)
-	// The pod update sent through the fakeWatcher should figure out the managing FimWatcher and
-	// send it into the syncHandler.
-	fwc.syncHandler = f.syncHandler_CheckFimWatcherSynced(fwc, fw, received)
+	// The pod update sent through the fakeWatcher should figure out the
+	// managing FimWatcher and send it into the syncHandler.
+	fwc.syncHandler = f.syncHandlerCheckFimWatcherSynced(fwc, fw, received)
 
 	stopCh := make(chan struct{})
 	defer close(stopCh)
 
-	// Start only the pod watcher and the workqueue, send a watch event,
-	// and make sure it hits the sync method for the right FimWatcher.
+	// Start only the pod watcher and the workqueue, send a watch event, and
+	// make sure it hits the sync method for the right FimWatcher.
 	go f.kubeinformers.Core().V1().Pods().Informer().Run(stopCh)
 	go fwc.Run(1, stopCh)
 
@@ -716,7 +705,7 @@ func TestUpdatePods(t *testing.T) {
 	fwc := f.newFimWatcherController(nil, nil, nil)
 
 	received := make(chan string)
-	fwc.syncHandler = f.syncHandler_SendFimWatcherName(fwc, fw1, received)
+	fwc.syncHandler = f.syncHandlerSendFimWatcherName(fwc, fw1, received)
 
 	stopCh := make(chan struct{})
 	defer close(stopCh)
@@ -769,32 +758,40 @@ func TestDeleteDaemonPod(t *testing.T) {
 	fw := newFimWatcher("foo", fwMatchedLabel)
 	f.fwLister = append(f.fwLister, fw)
 	f.objects = append(f.objects, fw)
-	pod := newPod("bar", fw, corev1.PodRunning, true, true)
-	daemon := newDaemonPod("baz", fw)
-	ep := newEndpoint(fimdService, daemon)
-	f.podLister = append(f.podLister, pod, daemon)
-	f.endpointsLister = append(f.endpointsLister, ep)
-	f.kubeobjects = append(f.kubeobjects, pod, daemon, ep)
 	fwc := f.newFimWatcherController(kubeclient, nil, nil)
+
+	received := make(chan string)
+	// The pod update sent through the fakeWatcher should figure out the
+	// managing FimWatcher and send it into the syncHandler.
+	fwc.syncHandler = f.syncHandlerSendFimWatcherName(fwc, fw, received)
 
 	stopCh := make(chan struct{})
 	defer close(stopCh)
 
-	// Start only the pod watcher and the workqueue, send a watch event,
-	// and make sure it hits the sync method for the right FimWatcher.
+	// Start only the pod watcher and the workqueue, send a watch event, and
+	// make sure it hits the sync method for the right FimWatcher.
 	go f.kubeinformers.Core().V1().Pods().Informer().Run(stopCh)
 	go fwc.Run(1, stopCh)
 
-	fwc.addPod(daemon)
-	if len(fwc.fimdConnections) == 0 {
-		t.Errorf("Expected fimdConnections to be added; have %v", len(fwc.fimdConnections))
+	pod := newPod("bar", fw, corev1.PodRunning, true, false)
+	fakeWatch.Add(pod)
+
+	daemon := newDaemonPod("baz", fw)
+	ep := newEndpoint(fimdService, daemon)
+	f.kubeinformers.Core().V1().Endpoints().Informer().GetIndexer().Add(ep)
+	fakeWatch.Add(daemon)
+
+	select {
+	case <-received:
+	case <-time.After(wait.ForeverTestTimeout):
+		t.Errorf("unexpected timeout from result channel")
 	}
 
-	fwc.deletePod(daemon)
-	if len(fwc.fimdConnections) > 0 {
-		t.Errorf("Expected fimdConnections to be removed; still have %v", len(fwc.fimdConnections))
-	}
-	if _, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found {
+	fakeWatch.Delete(daemon)
+
+	annotationMux.RLock()
+	defer annotationMux.RUnlock()
+	if _, found := pod.Annotations[FimWatcherAnnotationKey]; found {
 		t.Errorf("Expected pod annotations to be updated %#v", pod.Name)
 	}
 }
@@ -812,8 +809,9 @@ func TestDeleteFinalStateUnknown(t *testing.T) {
 		received <- key
 		return nil
 	}
-	// The DeletedFinalStateUnknown object should cause the FimWatcher manager to insert
-	// the controller matching the selectors of the deleted pod into the work queue.
+	// The DeletedFinalStateUnknown object should cause the FimWatcher manager
+	// to insert the controller matching the selectors of the deleted pod into
+	// the work queue.
 	fwc.deletePod(cache.DeletedFinalStateUnknown{
 		Key: "foo",
 		Obj: pod,
@@ -901,8 +899,8 @@ func TestControllerUpdateStatusWithFailure(t *testing.T) {
 	f.verifyActions()
 }
 
-// TestFimWatcherSyncExpectations tests that a pod cannot sneak in between counting active pods
-// and checking expectations.
+// TestFimWatcherSyncExpectations tests that a pod cannot sneak in between
+// counting active pods and checking expectations.
 func TestFimWatcherSyncExpectations(t *testing.T) {
 	f := newFixture(t)
 	fwc := f.newFimWatcherController(nil, nil, nil)
@@ -916,8 +914,8 @@ func TestFimWatcherSyncExpectations(t *testing.T) {
 	fwc.expectations = controller.NewUIDTrackingControllerExpectations(FakeFWExpectations{
 		controller.NewControllerExpectations(), true, func() {
 			// If we check active pods before checking expectataions, the
-			// FimWatcher will create a new watcher because it doesn't see
-			// this pod, but has fulfilled its expectations.
+			// FimWatcher will create a new watcher because it doesn't see this
+			// pod, but has fulfilled its expectations.
 			f.kubeinformers.Core().V1().Pods().Informer().GetIndexer().Add(&postExpectationsPod)
 		},
 	})
@@ -1011,8 +1009,8 @@ func TestDeleteControllerAndExpectations(t *testing.T) {
 	}
 	f.waitForPodExpectationFulfillment(fwc, fwKey, pod)
 
-	// This is to simulate a concurrent addPod, that has a handle on the expectations
-	// as the controller deletes it.
+	// This is to simulate a concurrent addPod, that has a handle on the
+	// expectations as the controller deletes it.
 	podExp, exists, err := fwc.expectations.GetExpectations(fwKey)
 	if !exists || err != nil {
 		t.Errorf("No expectations found for FimWatcher")
@@ -1020,7 +1018,6 @@ func TestDeleteControllerAndExpectations(t *testing.T) {
 
 	f.fiminformers.Fimcontroller().V1alpha1().FimWatchers().Informer().GetIndexer().Delete(fw)
 	fwc.syncFimWatcher(GetKey(fw, t))
-	//if _, exists, err = fwc.expectations.GetExpectations(fwKey); exists {
 	if !podExp.Fulfilled() {
 		t.Errorf("Found expectations, expected none since the FimWatcher has been deleted.")
 	}
@@ -1047,7 +1044,8 @@ func TestDeletionTimestamp(t *testing.T) {
 	}
 	fwc.expectations.ExpectDeletions(fwKey, []string{controller.PodKey(&pod1)})
 
-	// A pod added with a deletion timestamp should decrement deletions, not creations.
+	// A pod added with a deletion timestamp should decrement deletions, not
+	// creations.
 	fwc.addPod(&pod1)
 
 	queueFW, _ := fwc.workqueue.Get()
@@ -1061,8 +1059,8 @@ func TestDeletionTimestamp(t *testing.T) {
 		t.Fatalf("Wrong expectations %#v", podExp)
 	}
 
-	// An update from no deletion timestamp to having one should be treated
-	// as a deletion.
+	// An update from no deletion timestamp to having one should be treated as
+	// a deletion.
 	pod2 := newPodList("baz", fw, nil, 1, corev1.PodPending, fwMatchedLabel, false).Items[0]
 	pod2.ResourceVersion = "2"
 	fwc.expectations.ExpectDeletions(fwKey, []string{controller.PodKey(&pod1)})
@@ -1189,7 +1187,8 @@ func TestPodControllerLookup(t *testing.T) {
 			}},
 		outFWName: "",
 	}, {
-		// Matching namespace and labels returns the key to the FimWatcher, not the FimWatcher name.
+		// Matching namespace and labels returns the key to the FimWatcher, not
+		// the FimWatcher name.
 		inFWs: []*fimv1alpha1.FimWatcher{{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "bar",
@@ -1325,6 +1324,10 @@ func TestGetPodKeys(t *testing.T) {
 }
 
 func TestUpdatePodOnceValid(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping updatePodOnceValid in short mode")
+	}
+
 	f := newFixture(t)
 	fw := newFimWatcher("foo", fwMatchedLabel)
 

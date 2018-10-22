@@ -45,32 +45,18 @@ git clone git@github.com/clustergarage/fim-controller
 go mod download
 ```
 
-### Building
-
-To build a local copy of the binary to run or troubleshoot with:
-
-```
-go build -o bin/fim-controller .
-```
-
-Or if you wish to build as a Docker container and run this from a local registry:
-
-```
-docker build -t clustergarage/fimcontroller .
-```
-
 ### Running
 
 **Note**: This assumes you have a working kubeconfig, not required if operating in-cluster.
 
 ```
-./bin/fim-controller -kubeconfig=$HOME/.kube/config
+go run . -kubeconfig=$HOME/.kube/config
 ```
 
 Or optionally connect to a locally-running daemon:
 
 ```
-./bin/fim-controller -kubeconfig=$HOME/.kube/config -fimd 0.0.0.0:50051
+go run . -kubeconfig=$HOME/.kube/config -fimd 0.0.0.0:50051
 ```
 
 **Warning**: When running the controller and daemon out-of-cluster in a VM-based Kubernetes context, the daemon will fail to locate the PID from the container ID through numerous cgroup checks and will be unable to start any watchers.
@@ -107,20 +93,52 @@ Flags for the glog logging library:
         comma-separated list of pattern=N settings for file-filtered logging
 ```
 
+### Building
+
+To build a local copy of the binary to run or troubleshoot with:
+
+```
+go build -o bin/fim-controller
+```
+
+Or if you wish to build as a Docker container and run this from a local registry:
+
+```
+docker build -t clustergarage/fimcontroller .
+```
+
 ## Testing
 
-Unit and integration tests included for the controller behavior can be run with:
+### Unit Tests
+
+Unit tests included for the controller behavior can be run with:
 
 ```
 go test pkg/controller/*
 ```
 
-Or, optionally running with [code coverage](https://blog.golang.org/cover) and generating an HTML report of the results:
+Running the tests skipping long-running tests can be done with the `-short` flag:
+
+```
+go test -short pkg/controller/*
+```
+
+Optionally, running with [code coverage](https://blog.golang.org/cover) and generating an HTML report of the results:
 
 ```
 go test -cover -coverprofile coverage/cover.out pkg/controller/*
 go tool cover -html coverage/cover.out
 ```
+
+### Integration Tests
+
+Integration tests included for the controller behavior can be run with:
+
+```
+go test -tags=integration pkg/controller/*
+```
+
+---
 
 #### Code Verification
 

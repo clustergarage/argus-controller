@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/golang/glog"
@@ -23,6 +24,10 @@ import (
 	fimv1alpha1 "clustergarage.io/fim-controller/pkg/apis/fimcontroller/v1alpha1"
 	fimv1alpha1client "clustergarage.io/fim-controller/pkg/client/clientset/versioned/typed/fimcontroller/v1alpha1"
 	pb "github.com/clustergarage/fim-proto/golang"
+)
+
+var (
+	annotationMux = &sync.RWMutex{}
 )
 
 // FimdConnection defines a FimD gRPC server URL and a gRPC client to connect
@@ -206,7 +211,9 @@ func updateAnnotations(removeAnnotations []string, newAnnotations map[string]str
 	for _, annotation := range removeAnnotations {
 		delete(annotations, annotation)
 	}
+	annotationMux.Lock()
 	accessor.SetAnnotations(annotations)
+	annotationMux.Unlock()
 
 	return nil
 }
