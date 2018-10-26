@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
@@ -47,7 +48,12 @@ func NewFimdConnection(hostURL string, client ...pb.FimdClient) *FimdConnection 
 	if len(client) > 0 {
 		fc.client = client[0]
 	} else {
-		if conn, err := grpc.Dial(fc.hostURL, grpc.WithInsecure()); err == nil {
+		if conn, err := grpc.Dial(fc.hostURL, grpc.WithInsecure(),
+			// Add Prometheus gRPC interceptors so we can monitor calls between
+			// the controller and daemon.
+			grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
+			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
+		); err == nil {
 			fc.client = pb.NewFimdClient(conn)
 		}
 	}

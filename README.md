@@ -59,7 +59,7 @@ Or optionally connect to a locally-running daemon:
 go run . -kubeconfig=$HOME/.kube/config -fimd 0.0.0.0:50051
 ```
 
-**Warning**: When running the controller and daemon out-of-cluster in a VM-based Kubernetes context, the daemon will fail to locate the PID from the container ID through numerous cgroup checks and will be unable to start any watchers.
+**Warning**: When running the controller and daemon out-of-cluster in a VM-based Kubernetes context, the daemon will fail to locate the PID from the container ID through numerous cgroup checks and will be unable to start any watchers. When using Minikube, you can `minikube mount` the daemon folder, `minikube ssh` into it and run it inside the VM. Then point the controller at the IP/Port running inside the VM with the `-fimd` flag.
 
 ---
 
@@ -70,10 +70,14 @@ Main set of flags for connecting to the Kuberetes client and API server; hooking
 
   -fimd string
         The address of the FimD server. Only required if daemon is running out-of-cluster.
+  -health integer
+        The port to use for setting up the health check that will be used to monitor the controller.
   -kubeconfig string
         Path to a kubeconfig. Only required if out-of-cluster.
   -master string
         The address of the Kubernetes API server. Overrides any value in kubeconfig. Only required if out-of-cluster.
+  -prometheus integer
+        The port to use for setting up Prometheus metrics. This can be used by the cluster Prometheus to scrape data.
 
 Flags for the glog logging library:
 
