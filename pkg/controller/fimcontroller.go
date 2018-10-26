@@ -992,6 +992,7 @@ func (fwc *FimWatcherController) getFimWatcherSubjects(fw *fimv1alpha1.FimWatche
 			OnlyDir:   s.OnlyDir,
 			Recursive: s.Recursive,
 			MaxDepth:  s.MaxDepth,
+			Tags:      s.Tags,
 		})
 	}
 	return subjects
