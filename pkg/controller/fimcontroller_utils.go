@@ -1,9 +1,12 @@
 package fimcontroller
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"sync"
 	"time"
 
@@ -11,6 +14,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	corev1 "k8s.io/api/core/v1"
 	errorsapi "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -28,6 +32,11 @@ import (
 )
 
 var (
+	Insecure bool
+	CaFile   string
+	CertFile string
+	KeyFile  string
+
 	annotationMux = &sync.RWMutex{}
 )
 
@@ -43,19 +52,66 @@ type FimdConnection struct {
 // NewFimdConnection creates a new FimdConnection type given a required hostURL
 // and an optional gRPC client; if the client is not specified, this is created
 // for you here.
-func NewFimdConnection(hostURL string, client ...pb.FimdClient) *FimdConnection {
+func NewFimdConnection(hostURL, certFile, keyFile, caFile string, insecure bool, client ...pb.FimdClient) *FimdConnection {
+	// Store passed-in configuration to later create FimdConnections.
+	Insecure = insecure
+	CertFile = certFile
+	KeyFile = keyFile
+	CaFile = caFile
+
 	fc := &FimdConnection{hostURL: hostURL}
 	if len(client) > 0 {
 		fc.client = client[0]
 	} else {
-		if conn, err := grpc.Dial(fc.hostURL, grpc.WithInsecure(),
+		var opts []grpc.DialOption
+		if insecure {
+			opts = append(opts, grpc.WithInsecure())
+		} else {
+			if certFile == "" || keyFile == "" {
+				fmt.Errorf("Certficate/private key not supplied in secure mode (see -insecure flag)")
+				return nil
+			}
+			if caFile == "" {
+				fmt.Errorf("CA certificate not supplied in secure mode (see -insecure flag)")
+				return nil
+			}
+
+			cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+			if err != nil {
+				fmt.Errorf("load peer cert/key error: %v", err)
+				return nil
+			}
+			cacert, err := ioutil.ReadFile(caFile)
+			if err != nil {
+				fmt.Errorf("read ca cert file error: %v", err)
+				return nil
+			}
+			cacertpool := x509.NewCertPool()
+			cacertpool.AppendCertsFromPEM(cacert)
+			tlsconfig := &tls.Config{
+				Certificates: []tls.Certificate{cert},
+				RootCAs:      cacertpool,
+			}
+			creds := credentials.NewTLS(tlsconfig)
+
+			//creds, err := credentials.NewClientTLSFromFile(certFile, "")
+			//if err != nil {
+			//	log.Fatalf("Could not load TLS cert: %s", err)
+			//}
+			opts = append(opts, grpc.WithTransportCredentials(creds))
+		}
+		opts = append(opts,
 			// Add Prometheus gRPC interceptors so we can monitor calls between
 			// the controller and daemon.
 			grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
-			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
-		); err == nil {
-			fc.client = pb.NewFimdClient(conn)
+			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor))
+
+		conn, err := grpc.Dial(fc.hostURL, opts...)
+		if err != nil {
+			fmt.Errorf("Could not connect: %v", err)
+			return nil
 		}
+		fc.client = pb.NewFimdClient(conn)
 	}
 	return fc
 }
@@ -72,7 +128,7 @@ func (fc *FimdConnection) AddFimdWatcher(config *pb.FimdConfig) (*pb.FimdHandle,
 	glog.Infof("Received CreateWatch response: %#v", response)
 	if err != nil || response.NodeName == "" {
 		return nil, errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
-			config.NodeName, errors.New("fimd::CreateWatch failed"))
+			config.NodeName, errors.New(fmt.Sprintf("fimd::CreateWatch failed: %v", err)))
 	}
 	return response, nil
 }
@@ -89,7 +145,7 @@ func (fc *FimdConnection) RemoveFimdWatcher(config *pb.FimdConfig) error {
 	_, err := fc.client.DestroyWatch(ctx, config)
 	if err != nil {
 		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
-			config.NodeName, errors.New("fimd::DestroyWatch failed"))
+			config.NodeName, errors.New(fmt.Sprintf("fimd::DestroyWatch failed: %v", err)))
 	}
 	return nil
 }
@@ -104,7 +160,7 @@ func (fc *FimdConnection) GetWatchState() ([]*pb.FimdHandle, error) {
 	stream, err := fc.client.GetWatchState(ctx, &pb.Empty{})
 	if err != nil {
 		return nil, errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
-			fc.hostURL, errors.New("fimd::GetWatchState failed"))
+			fc.hostURL, errors.New(fmt.Sprintf("fimd::GetWatchState failed: %v", err)))
 	}
 	for {
 		watch, err := stream.Recv()

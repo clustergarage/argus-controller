@@ -17,4 +17,4 @@ COPY --from=builder /go/src/clustergarage.io/fim-controller/fimcontroller /
 COPY --from=builder /bin/grpc_health_probe /bin/
 # glog requires /tmp to exist as log_dir is /tmp by default
 COPY --from=builder /tmp /tmp
-CMD ["/fimcontroller"]
+CMD ["/fimcontroller", "-insecure"]

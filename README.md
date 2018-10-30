@@ -56,7 +56,11 @@ go run . -kubeconfig=$HOME/.kube/config
 Or optionally connect to a locally-running daemon:
 
 ```
-go run . -kubeconfig=$HOME/.kube/config -fimd 0.0.0.0:50051
+# run without secure credentials
+go run . -kubeconfig=$HOME/.kube/config -fimd 0.0.0.0:50051 -insecure
+
+# run with secure credentials
+go run . -kubeconfig=$HOME/.kube/config -fimd 0.0.0.0:50051 -ca /etc/ssl/ca.crt -cert /etc/ssl/cert.pem -key /etc/ssl/key.pem
 ```
 
 **Warning**: When running the controller and daemon out-of-cluster in a VM-based Kubernetes context, the daemon will fail to locate the PID from the container ID through numerous cgroup checks and will be unable to start any watchers. When using Minikube, you can `minikube mount` the daemon folder, `minikube ssh` into it and run it inside the VM. Then point the controller at the IP/Port running inside the VM with the `-fimd` flag.
@@ -68,10 +72,18 @@ go run . -kubeconfig=$HOME/.kube/config -fimd 0.0.0.0:50051
 ```
 Main set of flags for connecting to the Kuberetes client and API server; hooking directly into a locally-running FimD server:
 
+  -cafile string
+        Path to a CA certificate used for mutual TLS between the FimD server.
+  -certfile string
+        Path to a certificate used for mutual TLS between the FimD server.
   -fimd string
         The address of the FimD server. Only required if daemon is running out-of-cluster.
   -health integer
         The port to use for setting up the health check that will be used to monitor the controller.
+  -insecure
+        Whether to call to the FimD server without secure credentials.
+  -keyfile string
+        Path to a private key used for mutual TLS between the FimD server.
   -kubeconfig string
         Path to a kubeconfig. Only required if out-of-cluster.
   -master string
@@ -163,12 +175,13 @@ type FimWatcherSpec struct {
 }
 
 type FimWatcherSubject struct {
-  Paths     []string `json:"paths"`
-  Events    []string `json:"events"`
-  Ignore    []string `json:"ignore"`
-  OnlyDir   bool     `json:"onlyDir"`
-  Recursive bool     `json:"recursive"`
-  MaxDepth  int32    `json:"maxDepth"`
+  Paths     []string          `json:"paths"`
+  Events    []string          `json:"events"`
+  Ignore    []string          `json:"ignore"`
+  OnlyDir   bool              `json:"onlyDir"`
+  Recursive bool              `json:"recursive"`
+  MaxDepth  int32             `json:"maxDepth"`
+  Tags      map[string]string `json:"tags,omitempty"`
 }
 ```
 

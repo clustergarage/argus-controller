@@ -256,7 +256,7 @@ func newEndpoint(name string, pod *corev1.Pod) *corev1.Endpoints {
 
 func newMockFimdClient(ctrl *gomock.Controller) *FimdConnection {
 	client := pbmock.NewMockFimdClient(ctrl)
-	return NewFimdConnection(fwHostURL, client)
+	return NewFimdConnection(fwHostURL, "", "", "", false, client)
 }
 
 func stubGetWatchState(ctrl *gomock.Controller, conn *FimdConnection, ret *pb.FimdHandle) {

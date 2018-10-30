@@ -30,6 +30,7 @@ require (
 	github.com/hashicorp/golang-lru v0.0.0-20160207214719-a0d98a5f2880 // indirect
 	github.com/imdario/mergo v0.0.0-20141206190957-6633656539c1 // indirect
 	github.com/jonboulle/clockwork v0.1.0 // indirect
+	github.com/jsha/minica v1.0.1 // indirect
 	github.com/json-iterator/go v0.0.0-20180612202835-f2b4162afba3 // indirect
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
@@ -60,7 +61,7 @@ require (
 	golang.org/x/tools v0.0.0-20181004163742-59602fdee893 // indirect
 	google.golang.org/appengine v1.2.0 // indirect
 	google.golang.org/genproto v0.0.0-20181004005441-af9cb2a35e7f // indirect
-	google.golang.org/grpc v1.15.0
+	google.golang.org/grpc v1.16.0
 	gopkg.in/airbrake/gobrake.v2 v2.0.9 // indirect
 	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
 	gopkg.in/gemnasium/logrus-airbrake-hook.v2 v2.1.2 // indirect
