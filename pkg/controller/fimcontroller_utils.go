@@ -66,10 +66,10 @@ func NewFimdConnection(hostURL string, ca, cert, key []byte, insecure bool, clie
 		if insecure {
 			opts = append(opts, grpc.WithInsecure())
 		} else {
-			if ca == nil {
+			if len(ca) == 0 {
 				return nil, fmt.Errorf("Root CA not supplied in secure mode (see -insecure flag)")
 			}
-			if cert == nil || key == nil {
+			if len(cert) == 0 || len(key) == 0 {
 				return nil, fmt.Errorf("Certficate/private key not supplied in secure mode (see -insecure flag)")
 			}
 

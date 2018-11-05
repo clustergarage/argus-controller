@@ -50,17 +50,23 @@ go mod download
 **Note**: This assumes you have a working kubeconfig, not required if operating in-cluster.
 
 ```
-go run . -kubeconfig=$HOME/.kube/config
+go run . -kubeconfig=$HOME/.kube/config -insecure
 ```
 
 Or optionally connect to a locally-running daemon:
 
 ```
 # run without secure credentials
-go run . -kubeconfig=$HOME/.kube/config -fimd 0.0.0.0:50051 -insecure
+go run . -kubeconfig=$HOME/.kube/config \
+  -fimd localhost:50051 \
+  -insecure
 
 # run with secure credentials
-go run . -kubeconfig=$HOME/.kube/config -fimd 0.0.0.0:50051 -ca "$(cat /etc/ssl/ca.crt)" -cert "$(cat /etc/ssl/cert.pem)" -key "$(cat /etc/ssl/key.pem)"
+go run . -kubeconfig=$HOME/.kube/config \
+  -fimd localhost:50051 \
+  -ca "$(cat /etc/ssl/ca.crt)" \
+  -cert "$(cat /etc/ssl/cert.pem)" \
+  -key "$(cat /etc/ssl/key.pem)"
 ```
 
 **Warning**: When running the controller and daemon out-of-cluster in a VM-based Kubernetes context, the daemon will fail to locate the PID from the container ID through numerous cgroup checks and will be unable to start any watchers. When using Minikube, you can `minikube mount` the daemon folder, `minikube ssh` into it and run it inside the VM. Then point the controller at the IP/Port running inside the VM with the `-fimd` flag.
