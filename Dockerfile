@@ -1,4 +1,4 @@
-FROM golang:1.11 as builder
+FROM golang:1.11.1 as builder
 ENV GO111MODULE on
 WORKDIR /go/src/clustergarage.io/fim-controller/
 # Put dependencies in their own layer so they are cached.
