@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"sync"
 	"time"
 
@@ -33,9 +32,9 @@ import (
 
 var (
 	Insecure bool
-	CaFile   string
-	CertFile string
-	KeyFile  string
+	Ca       []byte
+	Cert     []byte
+	Key      []byte
 
 	annotationMux = &sync.RWMutex{}
 )
@@ -52,12 +51,12 @@ type FimdConnection struct {
 // NewFimdConnection creates a new FimdConnection type given a required hostURL
 // and an optional gRPC client; if the client is not specified, this is created
 // for you here.
-func NewFimdConnection(hostURL, certFile, keyFile, caFile string, insecure bool, client ...pb.FimdClient) *FimdConnection {
+func NewFimdConnection(hostURL string, ca, cert, key []byte, insecure bool, client ...pb.FimdClient) *FimdConnection {
 	// Store passed-in configuration to later create FimdConnections.
 	Insecure = insecure
-	CertFile = certFile
-	KeyFile = keyFile
-	CaFile = caFile
+	Ca = ca
+	Cert = cert
+	Key = key
 
 	fc := &FimdConnection{hostURL: hostURL}
 	if len(client) > 0 {
@@ -67,37 +66,27 @@ func NewFimdConnection(hostURL, certFile, keyFile, caFile string, insecure bool,
 		if insecure {
 			opts = append(opts, grpc.WithInsecure())
 		} else {
-			if certFile == "" || keyFile == "" {
-				fmt.Errorf("Certficate/private key not supplied in secure mode (see -insecure flag)")
-				return nil
-			}
-			if caFile == "" {
+			if ca == nil {
 				fmt.Errorf("CA certificate not supplied in secure mode (see -insecure flag)")
 				return nil
 			}
+			if cert == nil || key == nil {
+				fmt.Errorf("Certficate/private key not supplied in secure mode (see -insecure flag)")
+				return nil
+			}
 
-			cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+			keypair, err := tls.X509KeyPair(cert, key)
 			if err != nil {
 				fmt.Errorf("load peer cert/key error: %v", err)
 				return nil
 			}
-			cacert, err := ioutil.ReadFile(caFile)
-			if err != nil {
-				fmt.Errorf("read ca cert file error: %v", err)
-				return nil
-			}
 			cacertpool := x509.NewCertPool()
-			cacertpool.AppendCertsFromPEM(cacert)
+			cacertpool.AppendCertsFromPEM(ca)
 			tlsconfig := &tls.Config{
-				Certificates: []tls.Certificate{cert},
+				Certificates: []tls.Certificate{keypair},
 				RootCAs:      cacertpool,
 			}
 			creds := credentials.NewTLS(tlsconfig)
-
-			//creds, err := credentials.NewClientTLSFromFile(certFile, "")
-			//if err != nil {
-			//	log.Fatalf("Could not load TLS cert: %s", err)
-			//}
 			opts = append(opts, grpc.WithTransportCredentials(creds))
 		}
 		opts = append(opts,
