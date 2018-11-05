@@ -51,7 +51,7 @@ type FimdConnection struct {
 // NewFimdConnection creates a new FimdConnection type given a required hostURL
 // and an optional gRPC client; if the client is not specified, this is created
 // for you here.
-func NewFimdConnection(hostURL string, ca, cert, key []byte, insecure bool, client ...pb.FimdClient) *FimdConnection {
+func NewFimdConnection(hostURL string, ca, cert, key []byte, insecure bool, client ...pb.FimdClient) (*FimdConnection, error) {
 	// Store passed-in configuration to later create FimdConnections.
 	Insecure = insecure
 	Ca = ca
@@ -67,18 +67,15 @@ func NewFimdConnection(hostURL string, ca, cert, key []byte, insecure bool, clie
 			opts = append(opts, grpc.WithInsecure())
 		} else {
 			if ca == nil {
-				fmt.Errorf("CA certificate not supplied in secure mode (see -insecure flag)")
-				return nil
+				return nil, fmt.Errorf("Root CA not supplied in secure mode (see -insecure flag)")
 			}
 			if cert == nil || key == nil {
-				fmt.Errorf("Certficate/private key not supplied in secure mode (see -insecure flag)")
-				return nil
+				return nil, fmt.Errorf("Certficate/private key not supplied in secure mode (see -insecure flag)")
 			}
 
 			keypair, err := tls.X509KeyPair(cert, key)
 			if err != nil {
-				fmt.Errorf("load peer cert/key error: %v", err)
-				return nil
+				return nil, fmt.Errorf("Load peer cert/key error: %v", err)
 			}
 			cacertpool := x509.NewCertPool()
 			cacertpool.AppendCertsFromPEM(ca)
@@ -97,12 +94,11 @@ func NewFimdConnection(hostURL string, ca, cert, key []byte, insecure bool, clie
 
 		conn, err := grpc.Dial(fc.hostURL, opts...)
 		if err != nil {
-			fmt.Errorf("Could not connect: %v", err)
-			return nil
+			return nil, fmt.Errorf("Could not connect: %v", err)
 		}
 		fc.client = pb.NewFimdClient(conn)
 	}
-	return fc
+	return fc, nil
 }
 
 // AddFimdWatcher sends a message to the FimD daemon to create a new watcher.

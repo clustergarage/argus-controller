@@ -96,7 +96,10 @@ func main() {
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(kubeclientset, time.Second*30)
 	fimInformerFactory := informers.NewSharedInformerFactory(fimclientset, time.Second*30)
 
-	fimdConnection := fimcontroller.NewFimdConnection(fimdURL, []byte(ca), []byte(cert), []byte(key), insecure)
+	fimdConnection, err := fimcontroller.NewFimdConnection(fimdURL, []byte(ca), []byte(cert), []byte(key), insecure)
+	if err != nil {
+		log.Fatalf("Error creating connection to FimD server: %s", err.Error())
+	}
 
 	controller := fimcontroller.NewFimWatcherController(kubeclientset, fimclientset,
 		fimInformerFactory.Fimcontroller().V1alpha1().FimWatchers(),

@@ -324,7 +324,11 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 				return err
 			}
 			// Initialize connection to gRPC server on daemon.
-			fwc.fimdConnections.Store(hostURL, NewFimdConnection(hostURL, Ca, Cert, Key, Insecure))
+			conn, err := NewFimdConnection(hostURL, Ca, Cert, Key, Insecure)
+			if err != nil {
+				return err
+			}
+			fwc.fimdConnections.Store(hostURL, conn)
 			return err
 		}); retryErr != nil {
 			return
