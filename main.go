@@ -27,10 +27,12 @@ var (
 	masterURL      string
 	kubeconfig     string
 	fimdURL        string
-	ca             string
-	cert           string
-	key            string
-	insecure       bool
+	tls            bool
+	tlsCaFile      string
+	tlsCertFile    string
+	tlsKeyFile     string
+	tlsServerName  string
+	tlsNoVerify    bool
 	healthPort     uint
 	prometheusPort uint
 )
@@ -72,10 +74,12 @@ func init() {
 	flag.StringVar(&masterURL, "master", "", "The address of the Kubernetes API server. Overrides any value in kubeconfig. Only required if out-of-cluster.")
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig. Only required if out-of-cluster.")
 	flag.StringVar(&fimdURL, "fimd", "", "The address of the FimD server. Only required if daemon is running out-of-cluster.")
-	flag.StringVar(&ca, "ca", "", "Root CA used for mutual TLS between the FimD server.")
-	flag.StringVar(&cert, "cert", "", "Certificate used for mutual TLS between the FimD server.")
-	flag.StringVar(&key, "key", "", "Private key used for mutual TLS between the FimD server.")
-	flag.BoolVar(&insecure, "insecure", false, "Whether to call to the FimD server without secure credentials.")
+	flag.BoolVar(&tls, "tls", false, "Whether to call to the FimD server with secure credentials.")
+	flag.StringVar(&tlsCaFile, "tls-ca-file", "", "Root CA used for mutual TLS between the FimD server.")
+	flag.StringVar(&tlsCertFile, "tls-cert-file", "", "Certificate used for mutual TLS between the FimD server.")
+	flag.StringVar(&tlsKeyFile, "tls-key-file", "", "Private key used for mutual TLS between the FimD server.")
+	flag.StringVar(&tlsServerName, "tls-server-name", "", "Server name used to verify the TLS certificate.")
+	flag.BoolVar(&tlsNoVerify, "tls-no-verify", false, "Whether to verify the TLS certificate presented by the server.")
 	flag.UintVar(&healthPort, "health", 5000, "The port to use for setting up the health check that will be used to monitor the controller.")
 	flag.UintVar(&prometheusPort, "prometheus", 2112, "The port to use for setting up Prometheus metrics. This can be used by the cluster Prometheus to scrape data.")
 }
@@ -96,7 +100,7 @@ func main() {
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(kubeclientset, time.Second*30)
 	fimInformerFactory := informers.NewSharedInformerFactory(fimclientset, time.Second*30)
 
-	fimdConnection, err := fimcontroller.NewFimdConnection(fimdURL, []byte(ca), []byte(cert), []byte(key), insecure)
+	fimdConnection, err := fimcontroller.NewFimdConnection(fimdURL, tls, tlsCaFile, tlsCertFile, tlsKeyFile, tlsServerName, tlsNoVerify)
 	if err != nil {
 		log.Fatalf("Error creating connection to FimD server: %s", err.Error())
 	}

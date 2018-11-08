@@ -1,11 +1,12 @@
 package fimcontroller
 
 import (
-	"crypto/tls"
+	cryptotls "crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"sync"
 	"time"
 
@@ -31,10 +32,12 @@ import (
 )
 
 var (
-	Insecure bool
-	Ca       []byte
-	Cert     []byte
-	Key      []byte
+	TLS                bool
+	TLSCaFile          string
+	TLSCertFile        string
+	TLSKeyFile         string
+	TLSServerName      string
+	InsecureSkipVerify bool
 
 	annotationMux = &sync.RWMutex{}
 )
@@ -51,41 +54,55 @@ type FimdConnection struct {
 // NewFimdConnection creates a new FimdConnection type given a required hostURL
 // and an optional gRPC client; if the client is not specified, this is created
 // for you here.
-func NewFimdConnection(hostURL string, ca, cert, key []byte, insecure bool, client ...pb.FimdClient) (*FimdConnection, error) {
+func NewFimdConnection(hostURL string, tls bool, caFile, certFile, keyFile, serverName string, insecureSkipVerify bool, client ...pb.FimdClient) (*FimdConnection, error) {
 	// Store passed-in configuration to later create FimdConnections.
-	Insecure = insecure
-	Ca = ca
-	Cert = cert
-	Key = key
+	TLS = tls
+	TLSCaFile = caFile
+	TLSCertFile = certFile
+	TLSKeyFile = keyFile
+	TLSServerName = serverName
+	InsecureSkipVerify = insecureSkipVerify
 
 	fc := &FimdConnection{hostURL: hostURL}
 	if len(client) > 0 {
 		fc.client = client[0]
 	} else {
 		var opts []grpc.DialOption
-		if insecure {
-			opts = append(opts, grpc.WithInsecure())
-		} else {
-			if len(ca) == 0 {
+		if TLS {
+			if TLSCaFile == "" {
 				return nil, fmt.Errorf("Root CA not supplied in secure mode (see -insecure flag)")
 			}
-			if len(cert) == 0 || len(key) == 0 {
+			if TLSCertFile == "" || TLSKeyFile == "" {
 				return nil, fmt.Errorf("Certficate/private key not supplied in secure mode (see -insecure flag)")
 			}
 
-			keypair, err := tls.X509KeyPair(cert, key)
+			cert, err := cryptotls.LoadX509KeyPair(TLSCertFile, TLSKeyFile)
 			if err != nil {
 				return nil, fmt.Errorf("Load peer cert/key error: %v", err)
 			}
+			cacert, err := ioutil.ReadFile(TLSCaFile)
+			if err != nil {
+				return nil, fmt.Errorf("Read CA certificate file error: %v", err)
+			}
 			cacertpool := x509.NewCertPool()
-			cacertpool.AppendCertsFromPEM(ca)
-			tlsconfig := &tls.Config{
-				Certificates: []tls.Certificate{keypair},
+			cacertpool.AppendCertsFromPEM(cacert)
+			tlsconfig := &cryptotls.Config{
+				Certificates: []cryptotls.Certificate{cert},
 				RootCAs:      cacertpool,
 			}
+			if TLSServerName != "" {
+				tlsconfig.ServerName = TLSServerName
+			}
+			if InsecureSkipVerify {
+				tlsconfig.InsecureSkipVerify = true
+			}
+			// InsecureSkipVerify
 			creds := credentials.NewTLS(tlsconfig)
 			opts = append(opts, grpc.WithTransportCredentials(creds))
+		} else {
+			opts = append(opts, grpc.WithInsecure())
 		}
+
 		opts = append(opts,
 			// Add Prometheus gRPC interceptors so we can monitor calls between
 			// the controller and daemon.
