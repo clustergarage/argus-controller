@@ -32,12 +32,12 @@ import (
 )
 
 var (
-	TLS                bool
-	TLSCaFile          string
-	TLSCertFile        string
-	TLSKeyFile         string
-	TLSServerName      string
-	InsecureSkipVerify bool
+	TLS           bool
+	TLSSkipVerify bool
+	TLSCACert     string
+	TLSClientCert string
+	TLSClientKey  string
+	TLSServerName string
 
 	annotationMux = &sync.RWMutex{}
 )
@@ -51,65 +51,59 @@ type FimdConnection struct {
 	client  pb.FimdClient
 }
 
+func BuildAndStoreDialOptions(tls, tlsSkipVerify bool, caCert, clientCert, clientKey, serverName string) (grpc.DialOption, error) {
+	// Store passed-in configuration to later create FimdConnections.
+	TLS = tls
+	TLSSkipVerify = tlsSkipVerify
+	TLSCACert = caCert
+	TLSClientCert = clientCert
+	TLSClientKey = clientKey
+	TLSServerName = serverName
+
+	if TLS {
+		var tlsconfig cryptotls.Config
+		if TLSClientCert != "" && TLSClientKey != "" {
+			keypair, err := cryptotls.LoadX509KeyPair(TLSClientCert, TLSClientKey)
+			if err != nil {
+				return nil, fmt.Errorf("Failed to load TLS client cert/key pair: %v", err)
+			}
+			tlsconfig.Certificates = []cryptotls.Certificate{keypair}
+		}
+
+		if TLSSkipVerify {
+			tlsconfig.InsecureSkipVerify = true
+		} else if TLSCACert != "" {
+			pem, err := ioutil.ReadFile(TLSCACert)
+			if err != nil {
+				return nil, fmt.Errorf("Failed to load root CA certificates from file %s: %v", TLSCACert, err)
+			}
+			cacertpool := x509.NewCertPool()
+			if !cacertpool.AppendCertsFromPEM(pem) {
+				return nil, fmt.Errorf("No root CA certificate parsed from file %s", TLSCACert)
+			}
+			tlsconfig.RootCAs = cacertpool
+		}
+		if TLSServerName != "" {
+			tlsconfig.ServerName = TLSServerName
+		}
+		return grpc.WithTransportCredentials(credentials.NewTLS(&tlsconfig)), nil
+	}
+	return grpc.WithInsecure(), nil
+}
+
 // NewFimdConnection creates a new FimdConnection type given a required hostURL
 // and an optional gRPC client; if the client is not specified, this is created
 // for you here.
-func NewFimdConnection(hostURL string, tls bool, caFile, certFile, keyFile, serverName string, insecureSkipVerify bool, client ...pb.FimdClient) (*FimdConnection, error) {
-	// Store passed-in configuration to later create FimdConnections.
-	TLS = tls
-	TLSCaFile = caFile
-	TLSCertFile = certFile
-	TLSKeyFile = keyFile
-	TLSServerName = serverName
-	InsecureSkipVerify = insecureSkipVerify
-
+func NewFimdConnection(hostURL string, opts grpc.DialOption, client ...pb.FimdClient) (*FimdConnection, error) {
 	fc := &FimdConnection{hostURL: hostURL}
 	if len(client) > 0 {
 		fc.client = client[0]
 	} else {
-		var opts []grpc.DialOption
-		if TLS {
-			if TLSCaFile == "" {
-				return nil, fmt.Errorf("Root CA not supplied in secure mode (see -insecure flag)")
-			}
-			if TLSCertFile == "" || TLSKeyFile == "" {
-				return nil, fmt.Errorf("Certficate/private key not supplied in secure mode (see -insecure flag)")
-			}
-
-			cert, err := cryptotls.LoadX509KeyPair(TLSCertFile, TLSKeyFile)
-			if err != nil {
-				return nil, fmt.Errorf("Load peer cert/key error: %v", err)
-			}
-			cacert, err := ioutil.ReadFile(TLSCaFile)
-			if err != nil {
-				return nil, fmt.Errorf("Read CA certificate file error: %v", err)
-			}
-			cacertpool := x509.NewCertPool()
-			cacertpool.AppendCertsFromPEM(cacert)
-			tlsconfig := &cryptotls.Config{
-				Certificates: []cryptotls.Certificate{cert},
-				RootCAs:      cacertpool,
-			}
-			if TLSServerName != "" {
-				tlsconfig.ServerName = TLSServerName
-			}
-			if InsecureSkipVerify {
-				tlsconfig.InsecureSkipVerify = true
-			}
-			// InsecureSkipVerify
-			creds := credentials.NewTLS(tlsconfig)
-			opts = append(opts, grpc.WithTransportCredentials(creds))
-		} else {
-			opts = append(opts, grpc.WithInsecure())
-		}
-
-		opts = append(opts,
+		conn, err := grpc.Dial(fc.hostURL, opts,
 			// Add Prometheus gRPC interceptors so we can monitor calls between
 			// the controller and daemon.
 			grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
 			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor))
-
-		conn, err := grpc.Dial(fc.hostURL, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("Could not connect: %v", err)
 		}

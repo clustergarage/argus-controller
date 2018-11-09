@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/golang/glog"
@@ -23,16 +24,21 @@ import (
 	"clustergarage.io/fim-controller/pkg/signals"
 )
 
+const (
+	// StatusInvalidArguments indicates specified invalid arguments.
+	StatusInvalidArguments = 1
+)
+
 var (
 	masterURL      string
 	kubeconfig     string
 	fimdURL        string
 	tls            bool
-	tlsCaFile      string
-	tlsCertFile    string
-	tlsKeyFile     string
+	tlsSkipVerify  bool
+	tlsCACert      string
+	tlsClientCert  string
+	tlsClientKey   string
 	tlsServerName  string
-	tlsNoVerify    bool
 	healthPort     uint
 	prometheusPort uint
 )
@@ -74,14 +80,48 @@ func init() {
 	flag.StringVar(&masterURL, "master", "", "The address of the Kubernetes API server. Overrides any value in kubeconfig. Only required if out-of-cluster.")
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig. Only required if out-of-cluster.")
 	flag.StringVar(&fimdURL, "fimd", "", "The address of the FimD server. Only required if daemon is running out-of-cluster.")
-	flag.BoolVar(&tls, "tls", false, "Whether to call to the FimD server with secure credentials.")
-	flag.StringVar(&tlsCaFile, "tls-ca-file", "", "Root CA used for mutual TLS between the FimD server.")
-	flag.StringVar(&tlsCertFile, "tls-cert-file", "", "Certificate used for mutual TLS between the FimD server.")
-	flag.StringVar(&tlsKeyFile, "tls-key-file", "", "Private key used for mutual TLS between the FimD server.")
-	flag.StringVar(&tlsServerName, "tls-server-name", "", "Server name used to verify the TLS certificate.")
-	flag.BoolVar(&tlsNoVerify, "tls-no-verify", false, "Whether to verify the TLS certificate presented by the server.")
+	flag.BoolVar(&tls, "tls", false, "Connect to the FimD server using TLS. (default: false)")
+	flag.BoolVar(&tlsSkipVerify, "tls-skip-verify", false, "Do not verify the certificate presented by the server. (default: false)")
+	flag.StringVar(&tlsCACert, "tls-ca-cert", "", "The file containing trusted certificates for verifying the server. (with -tls, optional)")
+	flag.StringVar(&tlsClientCert, "tls-client-cert", "", "The file containing the client certificate for authenticating with the server. (with -tls, optional)")
+	flag.StringVar(&tlsClientKey, "tls-client-key", "", "The file containing the client private key for authenticating with the server. (with -tls)")
+	flag.StringVar(&tlsServerName, "tls-server-name", "", "Override the hostname used to verify the server certificate. (with -tls)")
 	flag.UintVar(&healthPort, "health", 5000, "The port to use for setting up the health check that will be used to monitor the controller.")
 	flag.UintVar(&prometheusPort, "prometheus", 2112, "The port to use for setting up Prometheus metrics. This can be used by the cluster Prometheus to scrape data.")
+
+	argError := func(s string, v ...interface{}) {
+		log.Printf("error: "+s, v...)
+		os.Exit(StatusInvalidArguments)
+	}
+
+	if !tls {
+		if tlsSkipVerify {
+			argError("Specified -tls-skip-verify without specifying -tls.")
+		}
+		if tlsCACert != "" {
+			argError("Specified -tls-ca-cert without specifying -tls.")
+		}
+		if tlsClientCert != "" {
+			argError("Specified -tls-client-cert without specifying -tls.")
+		}
+		if tlsServerName != "" {
+			argError("Specified -tls-server-name without specifying -tls.")
+		}
+	}
+	if tlsClientCert != "" && tlsClientKey == "" {
+		argError("Specified -tls-client-cert without specifying -tls-client-key.")
+	}
+	if tlsClientCert == "" && tlsClientKey != "" {
+		argError("Specified -tls-client-key without specifying -tls-client-cert.")
+	}
+	if tlsSkipVerify {
+		if tlsCACert != "" {
+			argError("Cannot specify -tls-ca-cert with -tls-skip-verify (CA cert would not be used).")
+		}
+		if tlsServerName != "" {
+			argError("Cannot specify -tls-server-name with -tls-skip-verify (server name would not be used).")
+		}
+	}
 }
 
 func main() {
@@ -100,7 +140,12 @@ func main() {
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(kubeclientset, time.Second*30)
 	fimInformerFactory := informers.NewSharedInformerFactory(fimclientset, time.Second*30)
 
-	fimdConnection, err := fimcontroller.NewFimdConnection(fimdURL, tls, tlsCaFile, tlsCertFile, tlsKeyFile, tlsServerName, tlsNoVerify)
+	opts, err := fimcontroller.BuildAndStoreDialOptions(tls, tlsSkipVerify, tlsCACert, tlsClientCert, tlsClientKey, tlsServerName)
+	if err != nil {
+		log.Fatalf("Error creating dial options: %s", err.Error())
+	}
+	fimdConnection, err := fimcontroller.NewFimdConnection(fimdURL, opts)
+
 	if err != nil {
 		log.Fatalf("Error creating connection to FimD server: %s", err.Error())
 	}
