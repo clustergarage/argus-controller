@@ -58,15 +58,16 @@ Or optionally connect to a locally-running daemon:
 ```
 # run without secure credentials
 go run . -kubeconfig=$HOME/.kube/config \
-  -fimd localhost:50051 \
-  -insecure
+  -fimd localhost:50051
 
 # run with secure credentials
 go run . -kubeconfig=$HOME/.kube/config \
   -fimd localhost:50051 \
-  -ca "$(cat /etc/ssl/ca.crt)" \
-  -cert "$(cat /etc/ssl/cert.pem)" \
-  -key "$(cat /etc/ssl/key.pem)"
+  -tls \
+  -tls-ca-cert /etc/ssl/ca.pem \
+  -tls-client-cert /etc/ssl/cert.pem \
+  -tls-client-key /etc/ssl/key.pem \
+  -tls-server-name localhost
 ```
 
 **Warning**: When running the controller and daemon out-of-cluster in a VM-based Kubernetes context, the daemon will fail to locate the PID from the container ID through numerous cgroup checks and will be unable to start any watchers. When using Minikube, you can `minikube mount` the daemon folder, `minikube ssh` into it and run it inside the VM. Then point the controller at the IP/Port running inside the VM with the `-fimd` flag.
@@ -82,14 +83,18 @@ Main set of flags for connecting to the Kuberetes client and API server; hooking
         Path to a kubeconfig. Only required if out-of-cluster.
   -master string
         The address of the Kubernetes API server. Overrides any value in kubeconfig. Only required if out-of-cluster.
-  -insecure
-        Whether to call to the FimD server without secure credentials.
-  -ca string
-        CA certificate used for mutual TLS between the FimD server.
-  -cert string
-        Certificate used for mutual TLS between the FimD server.
-  -key string
-        Private key used for mutual TLS between the FimD server.
+  -tls
+        Connect to the FimD server using TLS. (default: false)
+  -tls-ca-cert string
+        The file containing trusted certificates for verifying the server. (with -tls, optional)
+  -tls-client-cert string
+        The file containing the client certificate for authenticating with the server. (with -tls, optional)
+  -tls-client-key string
+        The file containing the client private key for authenticating with the server. (with -tls)
+  -tls-server-name string
+        Override the hostname used to verify the server certificate. (with -tls)
+  -tls-skip-verify
+        Do not verify the certificate presented by the server. (default: false)
   -fimd string
         The address of the FimD server. Only required if daemon is running out-of-cluster.
   -health integer
