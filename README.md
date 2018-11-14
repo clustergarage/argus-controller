@@ -50,7 +50,7 @@ go mod download
 **Note**: This assumes you have a working kubeconfig, not required if operating in-cluster.
 
 ```
-go run . -kubeconfig=$HOME/.kube/config -insecure
+go run . -kubeconfig=$HOME/.kube/config
 ```
 
 Or optionally connect to a locally-running daemon:
@@ -131,7 +131,7 @@ go build -o bin/fim-controller
 Or if you wish to build as a Docker container and run this from a local registry:
 
 ```
-docker build -t clustergarage/fimcontroller .
+docker build -t clustergarage/fim-controller .
 ```
 
 ## Testing

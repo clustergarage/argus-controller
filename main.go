@@ -145,7 +145,6 @@ func main() {
 		log.Fatalf("Error creating dial options: %s", err.Error())
 	}
 	fimdConnection, err := fimcontroller.NewFimdConnection(fimdURL, opts)
-
 	if err != nil {
 		log.Fatalf("Error creating connection to FimD server: %s", err.Error())
 	}

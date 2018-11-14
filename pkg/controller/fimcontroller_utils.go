@@ -3,7 +3,6 @@ package fimcontroller
 import (
 	cryptotls "crypto/tls"
 	"crypto/x509"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -12,11 +11,12 @@ import (
 
 	"github.com/golang/glog"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
+	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	corev1 "k8s.io/api/core/v1"
-	errorsapi "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -31,12 +31,23 @@ import (
 	pb "github.com/clustergarage/fim-proto/golang"
 )
 
+const (
+	prometheusMetricName = "fim_k8s_events_total"
+	prometheusMetricHelp = "Count of inotify events observed by the FimD daemon."
+)
+
 var (
-	TLS           bool
+	// TLS ...
+	TLS bool
+	// TLSSkipVerify ...
 	TLSSkipVerify bool
-	TLSCACert     string
+	// TLSCACert ...
+	TLSCACert string
+	// TLSClientCert ...
 	TLSClientCert string
-	TLSClientKey  string
+	// TLSClientKey ...
+	TLSClientKey string
+	// TLSServerName ...
 	TLSServerName string
 
 	annotationMux = &sync.RWMutex{}
@@ -49,8 +60,12 @@ type FimdConnection struct {
 	hostURL string
 	handle  *pb.FimdHandle
 	client  pb.FimdClient
+	counter *prometheus.CounterVec
 }
 
+// BuildAndStoreDialOptions creates a grpc.DialOption object to be used with
+// grpc.Dial to connect to a daemon server. This function allows both secure
+// and insecure variants.
 func BuildAndStoreDialOptions(tls, tlsSkipVerify bool, caCert, clientCert, clientKey, serverName string) (grpc.DialOption, error) {
 	// Store passed-in configuration to later create FimdConnections.
 	TLS = tls
@@ -108,6 +123,17 @@ func NewFimdConnection(hostURL string, opts grpc.DialOption, client ...pb.FimdCl
 			return nil, fmt.Errorf("Could not connect: %v", err)
 		}
 		fc.client = pb.NewFimdClient(conn)
+
+		// Add Prometheus counter type for tracking inotify events.
+		fc.counter = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: prometheusMetricName,
+				Help: prometheusMetricHelp,
+			},
+			[]string{"fimwatcher", "event", "nodename"},
+		)
+		prometheus.Register(fc.counter)
+		go fc.ListenForMetrics()
 	}
 	return fc, nil
 }
@@ -123,8 +149,8 @@ func (fc *FimdConnection) AddFimdWatcher(config *pb.FimdConfig) (*pb.FimdHandle,
 	response, err := fc.client.CreateWatch(ctx, config)
 	glog.Infof("Received CreateWatch response: %#v", response)
 	if err != nil || response.NodeName == "" {
-		return nil, errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
-			config.NodeName, errors.New(fmt.Sprintf("fimd::CreateWatch failed: %v", err)))
+		return nil, errors.NewConflict(schema.GroupResource{Resource: "nodes"},
+			config.NodeName, fmt.Errorf(fmt.Sprintf("fimd::CreateWatch failed: %v", err)))
 	}
 	return response, nil
 }
@@ -140,8 +166,8 @@ func (fc *FimdConnection) RemoveFimdWatcher(config *pb.FimdConfig) error {
 
 	_, err := fc.client.DestroyWatch(ctx, config)
 	if err != nil {
-		return errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
-			config.NodeName, errors.New(fmt.Sprintf("fimd::DestroyWatch failed: %v", err)))
+		return errors.NewConflict(schema.GroupResource{Resource: "nodes"},
+			config.NodeName, fmt.Errorf(fmt.Sprintf("fimd::DestroyWatch failed: %v", err)))
 	}
 	return nil
 }
@@ -155,8 +181,8 @@ func (fc *FimdConnection) GetWatchState() ([]*pb.FimdHandle, error) {
 	var watchers []*pb.FimdHandle
 	stream, err := fc.client.GetWatchState(ctx, &pb.Empty{})
 	if err != nil {
-		return nil, errorsapi.NewConflict(schema.GroupResource{Resource: "nodes"},
-			fc.hostURL, errors.New(fmt.Sprintf("fimd::GetWatchState failed: %v", err)))
+		return nil, errors.NewConflict(schema.GroupResource{Resource: "nodes"},
+			fc.hostURL, fmt.Errorf(fmt.Sprintf("fimd::GetWatchState failed: %v", err)))
 	}
 	for {
 		watch, err := stream.Recv()
@@ -166,6 +192,23 @@ func (fc *FimdConnection) GetWatchState() ([]*pb.FimdHandle, error) {
 		watchers = append(watchers, watch)
 	}
 	return watchers, nil
+}
+
+// ListenForMetrics serves a stream that the daemon will send messages on when
+// it receives an inotify event so we can then record it in Prometheus.
+func (fc *FimdConnection) ListenForMetrics() {
+	ctx := context.Background()
+	defer ctx.Done()
+
+	stream, err := fc.client.RecordMetrics(ctx, &pb.Empty{})
+	if err != nil {
+		return
+	}
+	for {
+		if metric, err := stream.Recv(); err == nil {
+			fc.counter.WithLabelValues(metric.FimWatcher, metric.Event, metric.NodeName).Inc()
+		}
+	}
 }
 
 // updatePodFunc defines an function signature to be passed into

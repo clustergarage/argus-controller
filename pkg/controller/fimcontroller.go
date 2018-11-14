@@ -888,6 +888,7 @@ func (fwc *FimWatcherController) updatePodOnceValid(podName string, fw *fimv1alp
 				nodeName, errors.New("failed to get fimd connection"))
 		}
 		if handle, err := fc.AddFimdWatcher(&pb.FimdConfig{
+			Name:      fw.Name,
 			NodeName:  nodeName,
 			PodName:   pod.Name,
 			Cid:       cids,

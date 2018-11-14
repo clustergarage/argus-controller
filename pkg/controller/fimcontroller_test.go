@@ -10,6 +10,7 @@ import (
 	"time"
 
 	gomock "github.com/golang/mock/gomock"
+	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -256,7 +257,7 @@ func newEndpoint(name string, pod *corev1.Pod) *corev1.Endpoints {
 
 func newMockFimdClient(ctrl *gomock.Controller) *FimdConnection {
 	client := pbmock.NewMockFimdClient(ctrl)
-	conn, _ := NewFimdConnection(fwHostURL, []byte{}, []byte{}, []byte{}, false, client)
+	conn, _ := NewFimdConnection(fwHostURL, grpc.WithInsecure(), client)
 	return conn
 }
 
