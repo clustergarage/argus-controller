@@ -5,12 +5,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	fimcontroller "clustergarage.io/fim-controller/pkg/apis/fimcontroller"
+	arguscontroller "clustergarage.io/argus-controller/pkg/apis/arguscontroller"
 )
 
 // SchemeGroupVersion is group version used to register these objects
 var SchemeGroupVersion = schema.GroupVersion{
-	Group:   fimcontroller.GroupName,
+	Group:   arguscontroller.GroupName,
 	Version: "v1alpha1",
 }
 
@@ -34,8 +34,8 @@ var (
 // Adds the list of known types to Scheme.
 func addKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(SchemeGroupVersion,
-		&FimWatcher{},
-		&FimWatcherList{},
+		&ArgusWatcher{},
+		&ArgusWatcherList{},
 	)
 	metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
 	return nil

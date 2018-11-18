@@ -7,9 +7,9 @@ import (
 	sync "sync"
 	time "time"
 
-	versioned "clustergarage.io/fim-controller/pkg/client/clientset/versioned"
-	fimcontroller "clustergarage.io/fim-controller/pkg/client/informers/externalversions/fimcontroller"
-	internalinterfaces "clustergarage.io/fim-controller/pkg/client/informers/externalversions/internalinterfaces"
+	versioned "clustergarage.io/argus-controller/pkg/client/clientset/versioned"
+	arguscontroller "clustergarage.io/argus-controller/pkg/client/informers/externalversions/arguscontroller"
+	internalinterfaces "clustergarage.io/argus-controller/pkg/client/informers/externalversions/internalinterfaces"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
@@ -156,9 +156,9 @@ type SharedInformerFactory interface {
 	ForResource(resource schema.GroupVersionResource) (GenericInformer, error)
 	WaitForCacheSync(stopCh <-chan struct{}) map[reflect.Type]bool
 
-	Fimcontroller() fimcontroller.Interface
+	Arguscontroller() arguscontroller.Interface
 }
 
-func (f *sharedInformerFactory) Fimcontroller() fimcontroller.Interface {
-	return fimcontroller.New(f, f.namespace, f.tweakListOptions)
+func (f *sharedInformerFactory) Arguscontroller() arguscontroller.Interface {
+	return arguscontroller.New(f, f.namespace, f.tweakListOptions)
 }

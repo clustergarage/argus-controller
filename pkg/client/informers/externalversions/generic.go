@@ -5,7 +5,7 @@ package externalversions
 import (
 	"fmt"
 
-	v1alpha1 "clustergarage.io/fim-controller/pkg/apis/fimcontroller/v1alpha1"
+	v1alpha1 "clustergarage.io/argus-controller/pkg/apis/arguscontroller/v1alpha1"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	cache "k8s.io/client-go/tools/cache"
 )
@@ -36,9 +36,9 @@ func (f *genericInformer) Lister() cache.GenericLister {
 // TODO extend this to unknown resources with a client pool
 func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource) (GenericInformer, error) {
 	switch resource {
-	// Group=fimcontroller.clustergarage.io, Version=v1alpha1
-	case v1alpha1.SchemeGroupVersion.WithResource("fimwatchers"):
-		return &genericInformer{resource: resource.GroupResource(), informer: f.Fimcontroller().V1alpha1().FimWatchers().Informer()}, nil
+	// Group=arguscontroller.clustergarage.io, Version=v1alpha1
+	case v1alpha1.SchemeGroupVersion.WithResource("arguswatchers"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Arguscontroller().V1alpha1().ArgusWatchers().Informer()}, nil
 
 	}
 

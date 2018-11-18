@@ -3,13 +3,13 @@
 package v1alpha1
 
 import (
-	internalinterfaces "clustergarage.io/fim-controller/pkg/client/informers/externalversions/internalinterfaces"
+	internalinterfaces "clustergarage.io/argus-controller/pkg/client/informers/externalversions/internalinterfaces"
 )
 
 // Interface provides access to all the informers in this group version.
 type Interface interface {
-	// FimWatchers returns a FimWatcherInformer.
-	FimWatchers() FimWatcherInformer
+	// ArgusWatchers returns a ArgusWatcherInformer.
+	ArgusWatchers() ArgusWatcherInformer
 }
 
 type version struct {
@@ -23,7 +23,7 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 	return &version{factory: f, namespace: namespace, tweakListOptions: tweakListOptions}
 }
 
-// FimWatchers returns a FimWatcherInformer.
-func (v *version) FimWatchers() FimWatcherInformer {
-	return &fimWatcherInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+// ArgusWatchers returns a ArgusWatcherInformer.
+func (v *version) ArgusWatchers() ArgusWatcherInformer {
+	return &argusWatcherInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }

@@ -1,21 +1,21 @@
-# fim-controller
+# argus-controller
 
-[![go report](https://goreportcard.com/badge/github.com/clustergarage/fim-controller?style=flat-square)](https://goreportcard.com/report/github.com/clustergarage/fim-controller)
-[![Docker Automated build](https://img.shields.io/docker/build/clustergarage/fim-controller.svg?style=flat-square)](https://hub.docker.com/r/clustergarage/fim-controller)
+[![go report](https://goreportcard.com/badge/github.com/clustergarage/argus-controller?style=flat-square)](https://goreportcard.com/report/github.com/clustergarage/argus-controller)
+[![Docker Automated build](https://img.shields.io/docker/build/clustergarage/argus-controller.svg?style=flat-square)](https://hub.docker.com/r/clustergarage/argus-controller)
 
-This repository implements a Kubernetes controller for watching FimWatcher resources as defined with a CustomResourceDefinition.
+This repository implements a Kubernetes controller for watching ArgusWatcher resources as defined with a CustomResourceDefinition.
 
-**Note**: `go get` or `go mod` this package as `clustergarage.io/fim-controller`
+**Note**: `go get` or `go mod` this package as `clustergarage.io/argus-controller`
 
 It leverages the Kubernetes [client-go library](https://github.com/kubernetes/client-go/tree/master/tools/cache) to interact with various mechanisms explained in [these docs](https://github.com/kubernetes/sample-controller/blob/master/docs/controller-client-go.md).
 
 ## Purpose
 
-This controller is used primarily to communicate between a running cluster and the [fimd](https://github.com/clustergarage/fimd) daemons running alongside it.
+This controller is used primarily to communicate between a running cluster and the [argusd](https://github.com/clustergarage/argusd) daemons running alongside it.
 
 Included within the controller are some mechanisms to speak to the Kubernetes API and the daemons to:
 
-- Gain insights into pods, endpoints, and custom FimWatcher CRDs being added, updated, and deleted.
+- Gain insights into pods, endpoints, and custom ArgusWatcher CRDs being added, updated, and deleted.
 - Perform current daemon state check of watchers that it is currently hosting.
 - Notify the need to create and delete a filesystem watcher.
 - Perform health checks for readiness and liveness probes in Kubernetes.
@@ -39,7 +39,7 @@ export GO111MODULE=on
 
 ```
 mkdir -p $GOPATH/src/clustergarage.io && cd $_
-git clone git@github.com/clustergarage/fim-controller
+git clone git@github.com/clustergarage/argus-controller
 
 # optional: pre-download required go modules
 go mod download
@@ -58,11 +58,11 @@ Or optionally connect to a locally-running daemon:
 ```
 # run without secure credentials
 go run . -kubeconfig=$HOME/.kube/config \
-  -fimd localhost:50051
+  -argusd localhost:50051
 
 # run with secure credentials
 go run . -kubeconfig=$HOME/.kube/config \
-  -fimd localhost:50051 \
+  -argusd localhost:50051 \
   -tls \
   -tls-ca-cert /etc/ssl/ca.pem \
   -tls-client-cert /etc/ssl/cert.pem \
@@ -70,21 +70,21 @@ go run . -kubeconfig=$HOME/.kube/config \
   -tls-server-name localhost
 ```
 
-**Warning**: When running the controller and daemon out-of-cluster in a VM-based Kubernetes context, the daemon will fail to locate the PID from the container ID through numerous cgroup checks and will be unable to start any watchers. When using Minikube, you can `minikube mount` the daemon folder, `minikube ssh` into it and run it inside the VM. Then point the controller at the IP/Port running inside the VM with the `-fimd` flag.
+**Warning**: When running the controller and daemon out-of-cluster in a VM-based Kubernetes context, the daemon will fail to locate the PID from the container ID through numerous cgroup checks and will be unable to start any watchers. When using Minikube, you can `minikube mount` the daemon folder, `minikube ssh` into it and run it inside the VM. Then point the controller at the IP/Port running inside the VM with the `-argusd` flag.
 
 ---
 
-#### Usage of `fim-controller`:
+#### Usage of `argus-controller`:
 
 ```
-Main set of flags for connecting to the Kuberetes client and API server; hooking directly into a locally-running FimD server:
+Main set of flags for connecting to the Kuberetes client and API server; hooking directly into a locally-running ArgusD server:
 
   -kubeconfig string
         Path to a kubeconfig. Only required if out-of-cluster.
   -master string
         The address of the Kubernetes API server. Overrides any value in kubeconfig. Only required if out-of-cluster.
   -tls
-        Connect to the FimD server using TLS. (default: false)
+        Connect to the ArgusD server using TLS. (default: false)
   -tls-ca-cert string
         The file containing trusted certificates for verifying the server. (with -tls, optional)
   -tls-client-cert string
@@ -95,8 +95,8 @@ Main set of flags for connecting to the Kuberetes client and API server; hooking
         Override the hostname used to verify the server certificate. (with -tls)
   -tls-skip-verify
         Do not verify the certificate presented by the server. (default: false)
-  -fimd string
-        The address of the FimD server. Only required if daemon is running out-of-cluster.
+  -argusd string
+        The address of the ArgusD server. Only required if daemon is running out-of-cluster.
   -health integer
         The port to use for setting up the health check that will be used to monitor the controller.
   -prometheus integer
@@ -125,13 +125,13 @@ Flags for the glog logging library:
 To build a local copy of the binary to run or troubleshoot with:
 
 ```
-go build -o bin/fim-controller
+go build -o bin/argus-controller
 ```
 
 Or if you wish to build as a Docker container and run this from a local registry:
 
 ```
-docker build -t clustergarage/fim-controller .
+docker build -t clustergarage/argus-controller .
 ```
 
 ## Testing
@@ -176,16 +176,16 @@ golint pkg/controller/*
 
 ## Custom Resource Definition
 
-Each instance of the FimWatcher custom resource has an attached `Spec`, which is defined via a `struct{}` to provide data format validation. In practice, this `Spec` is arbitrary key-value data that specifies the configuration/behavior of the resource.
+Each instance of the ArgusWatcher custom resource has an attached `Spec`, which is defined via a `struct{}` to provide data format validation. In practice, this `Spec` is arbitrary key-value data that specifies the configuration/behavior of the resource.
 
 ```go
-type FimWatcherSpec struct {
+type ArgusWatcherSpec struct {
   Selector  *metav1.LabelSelector `json:"selector"`
-  Subjects  []*FimWatcherSubject  `json:"subjects"`
+  Subjects  []*ArgusWatcherSubject  `json:"subjects"`
   LogFormat string                `json:"logFormat"`
 }
 
-type FimWatcherSubject struct {
+type ArgusWatcherSubject struct {
   Paths     []string          `json:"paths"`
   Events    []string          `json:"events"`
   Ignore    []string          `json:"ignore"`
@@ -211,17 +211,17 @@ go get -u k8s.io/code-generator/cmd/deepcopy-gen
 
 The `update-codegen` script will automatically generate the following files and directories:
 
-- `pkg/apis/fimcontroller/v1alpha1/zz_generated.deepcopy.go`
+- `pkg/apis/arguscontroller/v1alpha1/zz_generated.deepcopy.go`
 - `pkg/client/`
 
-Changes should not be made manually to these files. When updating the definitions of `pkg/apis/fimcontroller/*` you should re-run the `update-codegen` script to regenerate the files listed above.
+Changes should not be made manually to these files. When updating the definitions of `pkg/apis/arguscontroller/*` you should re-run the `update-codegen` script to regenerate the files listed above.
 
 ## Cleanup
 
 You can clean up the created CustomResourceDefinition with:
 
 ```
-kubectl delete crd fimwatchers.fimcontroller.clustergarage.io
+kubectl delete crd arguswatchers.arguscontroller.clustergarage.io
 ```
 
 ## Documentation

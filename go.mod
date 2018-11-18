@@ -1,9 +1,10 @@
-module clustergarage.io/fim-controller
+module clustergarage.io/argus-controller
 
 require (
+	cloud.google.com/go v0.33.1 // indirect
 	github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973 // indirect
 	github.com/boltdb/bolt v1.3.1 // indirect
-	github.com/clustergarage/fim-proto v0.0.0-20181113235634-56fcce0848da
+	github.com/clustergarage/argus-proto v0.0.0-20181118021433-cc285ebd22ab
 	github.com/coreos/bbolt v1.3.0 // indirect
 	github.com/coreos/etcd v3.3.9+incompatible // indirect
 	github.com/coreos/go-semver v0.2.0 // indirect
@@ -17,6 +18,7 @@ require (
 	github.com/gogo/protobuf v0.0.0-20170330071051-c0656edd0d9e // indirect
 	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b
 	github.com/golang/groupcache v0.0.0-20160516000752-02826c3e7903 // indirect
+	github.com/golang/lint v0.0.0-20181026193005-c67002cb31c3 // indirect
 	github.com/golang/mock v1.1.1
 	github.com/google/btree v0.0.0-20160524151835-7d79101e329e // indirect
 	github.com/google/gofuzz v0.0.0-20161122191042-44d81051d367 // indirect
@@ -52,10 +54,15 @@ require (
 	github.com/ugorji/go/codec v0.0.0-20180831062425-e253f1f20942 // indirect
 	github.com/xiang90/probing v0.0.0-20160813154853-07dd2e8dfe18 // indirect
 	golang.org/x/crypto v0.0.0-20180222182404-49796115aa4b // indirect
-	golang.org/x/net v0.0.0-20181003013248-f5e5bdd77824
-	golang.org/x/sys v0.0.0-20181004145325-8469e314837c // indirect
+	golang.org/x/lint v0.0.0-20181026193005-c67002cb31c3 // indirect
+	golang.org/x/net v0.0.0-20181114220301-adae6a3d119a
+	golang.org/x/oauth2 v0.0.0-20181106182150-f42d05182288 // indirect
+	golang.org/x/sync v0.0.0-20181108010431-42b317875d0f // indirect
+	golang.org/x/sys v0.0.0-20181116161606-93218def8b18 // indirect
 	golang.org/x/time v0.0.0-20161028155119-f51c12702a4d // indirect
-	google.golang.org/genproto v0.0.0-20181004005441-af9cb2a35e7f // indirect
+	golang.org/x/tools v0.0.0-20181117154741-2ddaf7f79a09 // indirect
+	google.golang.org/appengine v1.3.0 // indirect
+	google.golang.org/genproto v0.0.0-20181109154231-b5d43981345b // indirect
 	google.golang.org/grpc v1.16.0
 	gopkg.in/airbrake/gobrake.v2 v2.0.9 // indirect
 	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
@@ -63,6 +70,7 @@ require (
 	gopkg.in/inf.v0 v0.9.0 // indirect
 	gopkg.in/square/go-jose.v2 v2.1.6 // indirect
 	gopkg.in/yaml.v1 v1.0.0-20140924161607-9f9df34309c0 // indirect
+	honnef.co/go/tools v0.0.0-20180920025451-e3ad64cb4ed3 // indirect
 	k8s.io/api v0.0.0-20180624190308-00c78f6603af
 	k8s.io/apiextensions-apiserver v0.0.0-20180625085349-779cefed6876 // indirect
 	k8s.io/apimachinery v0.0.0-20180624185650-1c56055d3f2f

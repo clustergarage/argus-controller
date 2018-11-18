@@ -3,9 +3,9 @@
 package fake
 
 import (
-	clientset "clustergarage.io/fim-controller/pkg/client/clientset/versioned"
-	fimcontrollerv1alpha1 "clustergarage.io/fim-controller/pkg/client/clientset/versioned/typed/fimcontroller/v1alpha1"
-	fakefimcontrollerv1alpha1 "clustergarage.io/fim-controller/pkg/client/clientset/versioned/typed/fimcontroller/v1alpha1/fake"
+	clientset "clustergarage.io/argus-controller/pkg/client/clientset/versioned"
+	arguscontrollerv1alpha1 "clustergarage.io/argus-controller/pkg/client/clientset/versioned/typed/arguscontroller/v1alpha1"
+	fakearguscontrollerv1alpha1 "clustergarage.io/argus-controller/pkg/client/clientset/versioned/typed/arguscontroller/v1alpha1/fake"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/discovery"
@@ -55,12 +55,12 @@ func (c *Clientset) Discovery() discovery.DiscoveryInterface {
 
 var _ clientset.Interface = &Clientset{}
 
-// FimcontrollerV1alpha1 retrieves the FimcontrollerV1alpha1Client
-func (c *Clientset) FimcontrollerV1alpha1() fimcontrollerv1alpha1.FimcontrollerV1alpha1Interface {
-	return &fakefimcontrollerv1alpha1.FakeFimcontrollerV1alpha1{Fake: &c.Fake}
+// ArguscontrollerV1alpha1 retrieves the ArguscontrollerV1alpha1Client
+func (c *Clientset) ArguscontrollerV1alpha1() arguscontrollerv1alpha1.ArguscontrollerV1alpha1Interface {
+	return &fakearguscontrollerv1alpha1.FakeArguscontrollerV1alpha1{Fake: &c.Fake}
 }
 
-// Fimcontroller retrieves the FimcontrollerV1alpha1Client
-func (c *Clientset) Fimcontroller() fimcontrollerv1alpha1.FimcontrollerV1alpha1Interface {
-	return &fakefimcontrollerv1alpha1.FakeFimcontrollerV1alpha1{Fake: &c.Fake}
+// Arguscontroller retrieves the ArguscontrollerV1alpha1Client
+func (c *Clientset) Arguscontroller() arguscontrollerv1alpha1.ArguscontrollerV1alpha1Interface {
+	return &fakearguscontrollerv1alpha1.FakeArguscontrollerV1alpha1{Fake: &c.Fake}
 }

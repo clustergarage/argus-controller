@@ -18,10 +18,10 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
-	clientset "clustergarage.io/fim-controller/pkg/client/clientset/versioned"
-	informers "clustergarage.io/fim-controller/pkg/client/informers/externalversions"
-	fimcontroller "clustergarage.io/fim-controller/pkg/controller"
-	"clustergarage.io/fim-controller/pkg/signals"
+	clientset "clustergarage.io/argus-controller/pkg/client/clientset/versioned"
+	informers "clustergarage.io/argus-controller/pkg/client/informers/externalversions"
+	arguscontroller "clustergarage.io/argus-controller/pkg/controller"
+	"clustergarage.io/argus-controller/pkg/signals"
 )
 
 const (
@@ -32,7 +32,7 @@ const (
 var (
 	masterURL      string
 	kubeconfig     string
-	fimdURL        string
+	argusdURL      string
 	tls            bool
 	tlsSkipVerify  bool
 	tlsCACert      string
@@ -52,11 +52,11 @@ func getKubernetesClient() (kubernetes.Interface, clientset.Interface) {
 	if err != nil {
 		log.Fatalf("Error building kubernetes clientset: %s", err.Error())
 	}
-	fimclientset, err := clientset.NewForConfig(config)
+	argusclientset, err := clientset.NewForConfig(config)
 	if err != nil {
-		log.Fatalf("Error building fim clientset: %s", err.Error())
+		log.Fatalf("Error building argus clientset: %s", err.Error())
 	}
-	return kubeclientset, fimclientset
+	return kubeclientset, argusclientset
 }
 
 func serveHealthCheck() {
@@ -79,8 +79,8 @@ func servePrometheus() {
 func init() {
 	flag.StringVar(&masterURL, "master", "", "The address of the Kubernetes API server. Overrides any value in kubeconfig. Only required if out-of-cluster.")
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig. Only required if out-of-cluster.")
-	flag.StringVar(&fimdURL, "fimd", "", "The address of the FimD server. Only required if daemon is running out-of-cluster.")
-	flag.BoolVar(&tls, "tls", false, "Connect to the FimD server using TLS. (default: false)")
+	flag.StringVar(&argusdURL, "argusd", "", "The address of the ArgusD server. Only required if daemon is running out-of-cluster.")
+	flag.BoolVar(&tls, "tls", false, "Connect to the ArgusD server using TLS. (default: false)")
 	flag.BoolVar(&tlsSkipVerify, "tls-skip-verify", false, "Do not verify the certificate presented by the server. (default: false)")
 	flag.StringVar(&tlsCACert, "tls-ca-cert", "", "The file containing trusted certificates for verifying the server. (with -tls, optional)")
 	flag.StringVar(&tlsClientCert, "tls-client-cert", "", "The file containing the client certificate for authenticating with the server. (with -tls, optional)")
@@ -136,27 +136,27 @@ func main() {
 	// Set up signals so we handle the first shutdown signal gracefully.
 	stopCh := signals.SetupSignalHandler()
 
-	kubeclientset, fimclientset := getKubernetesClient()
+	kubeclientset, argusclientset := getKubernetesClient()
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(kubeclientset, time.Second*30)
-	fimInformerFactory := informers.NewSharedInformerFactory(fimclientset, time.Second*30)
+	argusInformerFactory := informers.NewSharedInformerFactory(argusclientset, time.Second*30)
 
-	opts, err := fimcontroller.BuildAndStoreDialOptions(tls, tlsSkipVerify, tlsCACert, tlsClientCert, tlsClientKey, tlsServerName)
+	opts, err := arguscontroller.BuildAndStoreDialOptions(tls, tlsSkipVerify, tlsCACert, tlsClientCert, tlsClientKey, tlsServerName)
 	if err != nil {
 		log.Fatalf("Error creating dial options: %s", err.Error())
 	}
-	fimdConnection, err := fimcontroller.NewFimdConnection(fimdURL, opts)
+	argusdConnection, err := arguscontroller.NewArgusdConnection(argusdURL, opts)
 	if err != nil {
-		log.Fatalf("Error creating connection to FimD server: %s", err.Error())
+		log.Fatalf("Error creating connection to ArgusD server: %s", err.Error())
 	}
 
-	controller := fimcontroller.NewFimWatcherController(kubeclientset, fimclientset,
-		fimInformerFactory.Fimcontroller().V1alpha1().FimWatchers(),
+	controller := arguscontroller.NewArgusWatcherController(kubeclientset, argusclientset,
+		argusInformerFactory.Arguscontroller().V1alpha1().ArgusWatchers(),
 		kubeInformerFactory.Core().V1().Pods(),
 		kubeInformerFactory.Core().V1().Endpoints(),
-		fimdConnection)
+		argusdConnection)
 
 	go kubeInformerFactory.Start(stopCh)
-	go fimInformerFactory.Start(stopCh)
+	go argusInformerFactory.Start(stopCh)
 	go serveHealthCheck()
 	go servePrometheus()
 

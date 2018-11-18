@@ -1,4 +1,4 @@
-package fimcontroller
+package arguscontroller
 
 import (
 	"errors"
@@ -28,52 +28,52 @@ import (
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/controller"
 
-	fimv1alpha1 "clustergarage.io/fim-controller/pkg/apis/fimcontroller/v1alpha1"
-	clientset "clustergarage.io/fim-controller/pkg/client/clientset/versioned"
-	fimscheme "clustergarage.io/fim-controller/pkg/client/clientset/versioned/scheme"
-	informers "clustergarage.io/fim-controller/pkg/client/informers/externalversions/fimcontroller/v1alpha1"
-	listers "clustergarage.io/fim-controller/pkg/client/listers/fimcontroller/v1alpha1"
-	pb "github.com/clustergarage/fim-proto/golang"
+	argusv1alpha1 "clustergarage.io/argus-controller/pkg/apis/arguscontroller/v1alpha1"
+	clientset "clustergarage.io/argus-controller/pkg/client/clientset/versioned"
+	argusscheme "clustergarage.io/argus-controller/pkg/client/clientset/versioned/scheme"
+	informers "clustergarage.io/argus-controller/pkg/client/informers/externalversions/arguscontroller/v1alpha1"
+	listers "clustergarage.io/argus-controller/pkg/client/listers/arguscontroller/v1alpha1"
+	pb "github.com/clustergarage/argus-proto/golang"
 )
 
 const (
-	fimcontrollerAgentName = "fim-controller"
-	fimNamespace           = "fim"
-	fimdService            = "fimd-svc"
-	fimdSvcPortName        = "grpc"
+	arguscontrollerAgentName = "argus-controller"
+	argusNamespace           = "argus"
+	argusdService            = "argusd-svc"
+	argusdSvcPortName        = "grpc"
 
-	// FimWatcherAnnotationKey value to annotate a pod being watched by a FimD
-	// daemon.
-	FimWatcherAnnotationKey = "clustergarage.io/fim-watcher"
+	// ArgusWatcherAnnotationKey value to annotate a pod being watched by a
+	// ArgusD daemon.
+	ArgusWatcherAnnotationKey = "clustergarage.io/argus-watcher"
 
-	// SuccessSynced is used as part of the Event 'reason' when a FimWatcher is
-	// synced.
+	// SuccessSynced is used as part of the Event 'reason' when a ArgusWatcher
+	// is synced.
 	SuccessSynced = "Synced"
-	// SuccessAdded is used as part of the Event 'reason' when a FimWatcher is
-	// synced.
+	// SuccessAdded is used as part of the Event 'reason' when a ArgusWatcher
+	// is synced.
 	SuccessAdded = "Added"
-	// SuccessRemoved is used as part of the Event 'reason' when a FimWatcher
+	// SuccessRemoved is used as part of the Event 'reason' when a ArgusWatcher
 	// is synced.
 	SuccessRemoved = "Removed"
 	// MessageResourceAdded is the message used for an Event fired when a
-	// FimWatcher is synced added.
-	MessageResourceAdded = "Added FimD watcher on %v"
+	// ArgusWatcher is synced added.
+	MessageResourceAdded = "Added ArgusD watcher on %v"
 	// MessageResourceRemoved is the message used for an Event fired when a
-	// FimWatcher is synced removed.
-	MessageResourceRemoved = "Removed FimD watcher on %v"
+	// ArgusWatcher is synced removed.
+	MessageResourceRemoved = "Removed ArgusD watcher on %v"
 	// MessageResourceSynced is the message used for an Event fired when a
-	// FimWatcher is synced successfully.
-	MessageResourceSynced = "FimWatcher synced successfully"
+	// ArgusWatcher is synced successfully.
+	MessageResourceSynced = "ArgusWatcher synced successfully"
 
 	// statusUpdateRetries is the number of times we retry updating a
-	// FimWatcher's status.
+	// ArgusWatcher's status.
 	statusUpdateRetries = 1
 	// minReadySeconds
 	minReadySeconds = 10
 )
 
 var (
-	fimdSelector = map[string]string{"daemon": "fimd"}
+	argusdSelector = map[string]string{"daemon": "argusd"}
 
 	// updatePodQueue stores a local queue of pod updates that will ensure pods
 	// aren't being updated more than once at a single time. For example: if we
@@ -84,42 +84,42 @@ var (
 	updatePodQueue sync.Map
 )
 
-// FimWatcherController is the controller implementation for FimWatcher
+// ArgusWatcherController is the controller implementation for ArgusWatcher
 // resources.
-type FimWatcherController struct {
+type ArgusWatcherController struct {
 	// GroupVersionKind indicates the controller type.
 	// Different instances of this struct may handle different GVKs.
 	schema.GroupVersionKind
 
 	// kubeclientset is a standard Kubernetes clientset.
 	kubeclientset kubernetes.Interface
-	// fimclientset is a clientset for our own API group.
-	fimclientset clientset.Interface
+	// argusclientset is a clientset for our own API group.
+	argusclientset clientset.Interface
 
-	// Allow injection of syncFimWatcher.
+	// Allow injection of syncArgusWatcher.
 	syncHandler func(key string) error
 	// backoff is the backoff definition for RetryOnConflict.
 	backoff wait.Backoff
 
-	// A TTLCache of pod creates/deletes each fw expects to see.
+	// A TTLCache of pod creates/deletes each aw expects to see.
 	expectations *controller.UIDTrackingControllerExpectations
 
-	// A store of FimWatchers, populated by the shared informer passed to
-	// NewFimWatcherController.
-	fwLister listers.FimWatcherLister
-	// fwListerSynced returns true if the pod store has been synced at least
+	// A store of ArgusWatchers, populated by the shared informer passed to
+	// NewArgusWatcherController.
+	awLister listers.ArgusWatcherLister
+	// awListerSynced returns true if the pod store has been synced at least
 	// once. Added as a member to the struct to allow injection for testing.
-	fwListerSynced cache.InformerSynced
+	awListerSynced cache.InformerSynced
 
 	// A store of pods, populated by the shared informer passed to
-	// NewFimWatcherController.
+	// NewArgusWatcherController.
 	podLister corelisters.PodLister
 	// podListerSynced returns true if the pod store has been synced at least
 	// once. Added as a member to the struct to allow injection for testing.
 	podListerSynced cache.InformerSynced
 
 	// A store of endpoints, populated by the shared informer passed to
-	// NewFimWatcherController.
+	// NewArgusWatcherController.
 	endpointsLister corelisters.EndpointsLister
 	// endpointListerSynced returns true if the endpoints store has been synced
 	// at least once. Added as a member to the struct to allow injection for
@@ -136,107 +136,108 @@ type FimWatcherController struct {
 	// Kubernetes API.
 	recorder record.EventRecorder
 
-	// fimdConnections is a collection of connections we have open to the FimD
-	// server which wrap important functions to add, remove, and get a current
-	// up-to-date state of what the daemon thinks it should be watching.
-	fimdConnections sync.Map
-	// fimdURL is used to connect to the FimD gRPC server if daemon is
+	// argusdConnections is a collection of connections we have open to the
+	// ArgusD server which wrap important functions to add, remove, and get a
+	// current up-to-date state of what the daemon thinks it should be
+	// watching.
+	argusdConnections sync.Map
+	// argusdURL is used to connect to the ArgusD gRPC server if daemon is
 	// out-of-cluster.
-	fimdURL string
+	argusdURL string
 }
 
-// NewFimWatcherController returns a new FimWatcher controller.
-func NewFimWatcherController(kubeclientset kubernetes.Interface, fimclientset clientset.Interface,
-	fwInformer informers.FimWatcherInformer, podInformer coreinformers.PodInformer,
-	endpointsInformer coreinformers.EndpointsInformer, fimdConnection *FimdConnection) *FimWatcherController {
+// NewArgusWatcherController returns a new ArgusWatcher controller.
+func NewArgusWatcherController(kubeclientset kubernetes.Interface, argusclientset clientset.Interface,
+	awInformer informers.ArgusWatcherInformer, podInformer coreinformers.PodInformer,
+	endpointsInformer coreinformers.EndpointsInformer, argusdConnection *argusdConnection) *ArgusWatcherController {
 
 	// Create event broadcaster.
-	// Add fimcontroller types to the default Kubernetes Scheme so Events can
-	// be logged for fimcontroller types.
-	fimscheme.AddToScheme(scheme.Scheme)
+	// Add arguscontroller types to the default Kubernetes Scheme so Events can
+	// be logged for arguscontroller types.
+	argusscheme.AddToScheme(scheme.Scheme)
 	glog.Info("Creating event broadcaster")
 
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartLogging(glog.Infof)
 	eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: kubeclientset.CoreV1().Events("")})
-	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: fimcontrollerAgentName})
+	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: arguscontrollerAgentName})
 
-	fwc := &FimWatcherController{
-		GroupVersionKind:      appsv1.SchemeGroupVersion.WithKind("FimWatcher"),
+	awc := &ArgusWatcherController{
+		GroupVersionKind:      appsv1.SchemeGroupVersion.WithKind("ArgusWatcher"),
 		kubeclientset:         kubeclientset,
-		fimclientset:          fimclientset,
+		argusclientset:        argusclientset,
 		expectations:          controller.NewUIDTrackingControllerExpectations(controller.NewControllerExpectations()),
-		fwLister:              fwInformer.Lister(),
-		fwListerSynced:        fwInformer.Informer().HasSynced,
+		awLister:              awInformer.Lister(),
+		awListerSynced:        awInformer.Informer().HasSynced,
 		podLister:             podInformer.Lister(),
 		podListerSynced:       podInformer.Informer().HasSynced,
 		endpointsLister:       endpointsInformer.Lister(),
 		endpointsListerSynced: endpointsInformer.Informer().HasSynced,
-		workqueue:             workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "FimWatchers"),
+		workqueue:             workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ArgusWatchers"),
 		recorder:              recorder,
 	}
 
 	glog.Info("Setting up event handlers")
-	// Set up an event handler for when FimWatcher resources change.
-	fwInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    fwc.enqueueFimWatcher,
-		UpdateFunc: fwc.updateFimWatcher,
-		DeleteFunc: fwc.enqueueFimWatcher,
+	// Set up an event handler for when ArgusWatcher resources change.
+	awInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    awc.enqueueArgusWatcher,
+		UpdateFunc: awc.updateArgusWatcher,
+		DeleteFunc: awc.enqueueArgusWatcher,
 	})
 
 	// Set up an event handler for when Pod resources change.
 	podInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: fwc.addPod,
-		// This invokes the FimWatcher for every pod change, eg: host
+		AddFunc: awc.addPod,
+		// This invokes the ArgusWatcher for every pod change, eg: host
 		// assignment. Though this might seem like overkill the most frequent
-		// pod update is status, and the associated FimWatcher will only list
+		// pod update is status, and the associated ArgusWatcher will only list
 		// from local storage, so it should be okay.
-		UpdateFunc: fwc.updatePod,
-		DeleteFunc: fwc.deletePod,
+		UpdateFunc: awc.updatePod,
+		DeleteFunc: awc.deletePod,
 	})
 
-	fwc.syncHandler = fwc.syncFimWatcher
-	fwc.backoff = wait.Backoff{
+	awc.syncHandler = awc.syncArgusWatcher
+	awc.backoff = wait.Backoff{
 		Steps:    10,
 		Duration: 1 * time.Second,
 		Factor:   2.0,
 		Jitter:   0.1,
 	}
 
-	// If specifying a fimdConnection for a daemon that is located
-	// out-of-cluster, initialize the fimd connection here, because we will not
-	// receive an addPod event where it is normally initialized.
-	fwc.fimdConnections = sync.Map{}
-	if fimdConnection != nil {
-		fwc.fimdConnections.Store(fimdConnection.hostURL, fimdConnection)
-		fwc.fimdURL = fimdConnection.hostURL
+	// If specifying a argusdConnection for a daemon that is located
+	// out-of-cluster, initialize the argusd connection here, because we will
+	// not receive an addPod event where it is normally initialized.
+	awc.argusdConnections = sync.Map{}
+	if argusdConnection != nil {
+		awc.argusdConnections.Store(argusdConnection.hostURL, argusdConnection)
+		awc.argusdURL = argusdConnection.hostURL
 	}
 
-	return fwc
+	return awc
 }
 
 // Run will set up the event handlers for types we are interested in, as well
 // as syncing informer caches and starting workers. It will block until stopCh
 // is closed, at which point it will shutdown the workqueue and wait for
 // workers to finish processing their current work items.
-func (fwc *FimWatcherController) Run(workers int, stopCh <-chan struct{}) error {
+func (awc *ArgusWatcherController) Run(workers int, stopCh <-chan struct{}) error {
 	defer runtime.HandleCrash()
-	defer fwc.workqueue.ShutDown()
+	defer awc.workqueue.ShutDown()
 
 	// Start the informer factories to begin populating the informer caches.
-	glog.Info("Starting FimWatcher controller")
-	defer glog.Info("Shutting down FimWatcher controller")
+	glog.Info("Starting ArgusWatcher controller")
+	defer glog.Info("Shutting down ArgusWatcher controller")
 
 	// Wait for the caches to be synced before starting workers.
 	glog.Info("Waiting for informer caches to sync")
-	if ok := cache.WaitForCacheSync(stopCh, fwc.podListerSynced, fwc.endpointsListerSynced, fwc.fwListerSynced); !ok {
+	if ok := cache.WaitForCacheSync(stopCh, awc.podListerSynced, awc.endpointsListerSynced, awc.awListerSynced); !ok {
 		return fmt.Errorf("failed to wait for caches to sync")
 	}
 
 	glog.Info("Starting workers")
-	// Launch two workers to process FimWatcher resources.
+	// Launch two workers to process ArgusWatcher resources.
 	for i := 0; i < workers; i++ {
-		go wait.Until(fwc.runWorker, time.Second, stopCh)
+		go wait.Until(awc.runWorker, time.Second, stopCh)
 	}
 	glog.Info("Started workers")
 	<-stopCh
@@ -245,79 +246,79 @@ func (fwc *FimWatcherController) Run(workers int, stopCh <-chan struct{}) error 
 	return nil
 }
 
-// updateFimWatcher is a callback for when a FimWatcher is updated.
-func (fwc *FimWatcherController) updateFimWatcher(old, new interface{}) {
-	oldFW := old.(*fimv1alpha1.FimWatcher)
-	newFW := new.(*fimv1alpha1.FimWatcher)
+// updateArgusWatcher is a callback for when a ArgusWatcher is updated.
+func (awc *ArgusWatcherController) updateArgusWatcher(old, new interface{}) {
+	oldAW := old.(*argusv1alpha1.ArgusWatcher)
+	newAW := new.(*argusv1alpha1.ArgusWatcher)
 
-	logFormatChanged := !reflect.DeepEqual(newFW.Spec.LogFormat, oldFW.Spec.LogFormat)
-	subjectsChanged := !reflect.DeepEqual(newFW.Spec.Subjects, oldFW.Spec.Subjects)
+	logFormatChanged := !reflect.DeepEqual(newAW.Spec.LogFormat, oldAW.Spec.LogFormat)
+	subjectsChanged := !reflect.DeepEqual(newAW.Spec.Subjects, oldAW.Spec.Subjects)
 
 	if logFormatChanged || subjectsChanged {
-		// Add new FimWatcher definitions.
-		selector, err := metav1.LabelSelectorAsSelector(newFW.Spec.Selector)
+		// Add new ArgusWatcher definitions.
+		selector, err := metav1.LabelSelectorAsSelector(newAW.Spec.Selector)
 		if err != nil {
 			return
 		}
-		if selectedPods, err := fwc.podLister.Pods(newFW.Namespace).List(selector); err == nil {
+		if selectedPods, err := awc.podLister.Pods(newAW.Namespace).List(selector); err == nil {
 			for _, pod := range selectedPods {
 				if !podutil.IsPodReady(pod) {
 					continue
 				}
-				go fwc.updatePodOnceValid(pod.Name, newFW)
+				go awc.updatePodOnceValid(pod.Name, newAW)
 			}
 		}
 	}
 
-	fwc.enqueueFimWatcher(newFW)
+	awc.enqueueArgusWatcher(newAW)
 }
 
-// addPod is called when a pod is created, enqueue the FimWatcher that manages
-// it and update its expectations.
-func (fwc *FimWatcherController) addPod(obj interface{}) {
+// addPod is called when a pod is created, enqueue the ArgusWatcher that
+// manages it and update its expectations.
+func (awc *ArgusWatcherController) addPod(obj interface{}) {
 	pod := obj.(*corev1.Pod)
 
 	if pod.DeletionTimestamp != nil {
 		// On a restart of the controller manager, it's possible a new pod
 		// shows up in a state that is already pending deletion. Prevent the
 		// pod from being a creation observation.
-		fwc.deletePod(pod)
+		awc.deletePod(pod)
 		return
 	}
 
-	// If it has a FimWatcher annotation that's all that matters.
-	if fwName, found := pod.Annotations[FimWatcherAnnotationKey]; found {
-		fw, err := fwc.fwLister.FimWatchers(pod.Namespace).Get(fwName)
+	// If it has a ArgusWatcher annotation that's all that matters.
+	if awName, found := pod.Annotations[ArgusWatcherAnnotationKey]; found {
+		aw, err := awc.awLister.ArgusWatchers(pod.Namespace).Get(awName)
 		if err != nil {
 			return
 		}
-		fwKey, err := controller.KeyFunc(fw)
+		awKey, err := controller.KeyFunc(aw)
 		if err != nil {
 			return
 		}
 		glog.V(4).Infof("Pod %s created: %#v.", pod.Name, pod)
-		fwc.expectations.CreationObserved(fwKey)
-		fwc.enqueueFimWatcher(fw)
+		awc.expectations.CreationObserved(awKey)
+		awc.enqueueArgusWatcher(aw)
 		return
 	}
 
-	// If this pod is a FimD pod, we need to first initialize the connection to
-	// the gRPC server run on the daemon. Then a check is done on any pods
+	// If this pod is a ArgusD pod, we need to first initialize the connection
+	// to the gRPC server run on the daemon. Then a check is done on any pods
 	// running on the same node as the daemon, if they match our nodeSelector
-	// then immediately enqueue the FimWatcher for additions.
-	if label, _ := pod.Labels["daemon"]; label == "fimd" {
+	// then immediately enqueue the ArgusWatcher for additions.
+	if label, _ := pod.Labels["daemon"]; label == "argusd" {
 		var hostURL string
 		// Run this function with a retry, to make sure we get a connection to
 		// the daemon pod. If we exhaust all attempts, process error
 		// accordingly.
-		if retryErr := retry.RetryOnConflict(fwc.backoff, func() (err error) {
-			po, err := fwc.podLister.Pods(fimNamespace).Get(pod.Name)
+		if retryErr := retry.RetryOnConflict(awc.backoff, func() (err error) {
+			po, err := awc.podLister.Pods(argusNamespace).Get(pod.Name)
 			if err != nil {
 				err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
 					po.Name, errors.New("could not find pod"))
 				return err
 			}
-			hostURL, err = fwc.getHostURL(po)
+			hostURL, err = awc.getHostURL(po)
 			if err != nil {
 				err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
 					po.Name, errors.New("pod host is not available"))
@@ -328,17 +329,17 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 			if err != nil {
 				return err
 			}
-			conn, err := NewFimdConnection(hostURL, opts)
+			conn, err := NewArgusdConnection(hostURL, opts)
 			if err != nil {
 				return err
 			}
-			fwc.fimdConnections.Store(hostURL, conn)
+			awc.argusdConnections.Store(hostURL, conn)
 			return err
 		}); retryErr != nil {
 			return
 		}
 
-		allPods, err := fwc.podLister.List(labels.Everything())
+		allPods, err := awc.podLister.List(labels.Everything())
 		if err != nil {
 			return
 		}
@@ -346,37 +347,37 @@ func (fwc *FimWatcherController) addPod(obj interface{}) {
 			if po.Spec.NodeName != pod.Spec.NodeName {
 				continue
 			}
-			fws := fwc.getPodFimWatchers(po)
-			if len(fws) == 0 {
+			aws := awc.getPodArgusWatchers(po)
+			if len(aws) == 0 {
 				continue
 			}
 
 			glog.V(4).Infof("Unannotated pod %s found: %#v.", po.Name, po)
-			for _, fw := range fws {
-				fwc.enqueueFimWatcher(fw)
+			for _, aw := range aws {
+				awc.enqueueArgusWatcher(aw)
 			}
 		}
 		return
 	}
 
-	// Get a list of all matching FimWatchers and sync them. Do not observe
+	// Get a list of all matching ArgusWatchers and sync them. Do not observe
 	// creation because no controller should be waiting for an orphan.
-	fws := fwc.getPodFimWatchers(pod)
-	if len(fws) == 0 {
+	aws := awc.getPodArgusWatchers(pod)
+	if len(aws) == 0 {
 		return
 	}
 
 	glog.V(4).Infof("Unannotated pod %s found: %#v.", pod.Name, pod)
-	for _, fw := range fws {
-		fwc.enqueueFimWatcher(fw)
+	for _, aw := range aws {
+		awc.enqueueArgusWatcher(aw)
 	}
 }
 
-// updatePod is called when a pod is updated. Figure out what FimWatcher(s)
+// updatePod is called when a pod is updated. Figure out what ArgusWatcher(s)
 // manage it and wake them up. If the labels of the pod have changed we need to
-// awaken both the old and new FimWatcher. old and new must be *corev1.Pod
+// awaken both the old and new ArgusWatcher. old and new must be *corev1.Pod
 // types.
-func (fwc *FimWatcherController) updatePod(old, new interface{}) {
+func (awc *ArgusWatcherController) updatePod(old, new interface{}) {
 	newPod := new.(*corev1.Pod)
 	oldPod := old.(*corev1.Pod)
 
@@ -392,37 +393,37 @@ func (fwc *FimWatcherController) updatePod(old, new interface{}) {
 		// When a pod is deleted gracefully it's deletion timestamp is first
 		// modified to reflect a grace period, and after such time has passed,
 		// the kubelet actually deletes it from the store. We receive an update
-		// for modification of the deletion timestamp and expect an fw to
+		// for modification of the deletion timestamp and expect an aw to
 		// create more watchers asap, not wait until the kubelet actually
 		// deletes the pod. This is different from the Phase of a pod changing,
-		// because an fw never initiates a phase change, and so is never asleep
+		// because an aw never initiates a phase change, and so is never asleep
 		// waiting for the same.
-		fwc.deletePod(newPod)
+		awc.deletePod(newPod)
 		if labelChanged {
 			// We don't need to check the oldPod.DeletionTimestamp because
 			// DeletionTimestamp cannot be unset.
-			fwc.deletePod(oldPod)
+			awc.deletePod(oldPod)
 		}
 		return
 	}
 
-	fws := fwc.getPodFimWatchers(newPod)
-	for _, fw := range fws {
-		fwc.enqueueFimWatcher(fw)
+	aws := awc.getPodArgusWatchers(newPod)
+	for _, aw := range aws {
+		awc.enqueueArgusWatcher(aw)
 	}
 }
 
-// deletePod is called when a pod is deleted. Enqueue the FimWatcher that
+// deletePod is called when a pod is deleted. Enqueue the ArgusWatcher that
 // watches the pod and update its expectations. obj could be an *v1.Pod, or a
 // DeletionFinalStateUnknown marker item.
-func (fwc *FimWatcherController) deletePod(obj interface{}) {
+func (awc *ArgusWatcherController) deletePod(obj interface{}) {
 	pod, ok := obj.(*corev1.Pod)
 
 	// When a delete is dropped, the relist will notice a pod in the store not
 	// in the list, leading to the insertion of a tombstone object which
 	// contains the deleted key/value. Note that this value might be stale. If
-	// the pod changed labels the new FimWatcher will not be woken up until the
-	// periodic resync.
+	// the pod changed labels the new ArgusWatcher will not be woken up until
+	// the periodic resync.
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 		if !ok {
@@ -436,33 +437,33 @@ func (fwc *FimWatcherController) deletePod(obj interface{}) {
 		}
 	}
 
-	if fwName, found := pod.Annotations[FimWatcherAnnotationKey]; found {
-		fw, err := fwc.fwLister.FimWatchers(pod.Namespace).Get(fwName)
+	if awName, found := pod.Annotations[ArgusWatcherAnnotationKey]; found {
+		aw, err := awc.awLister.ArgusWatchers(pod.Namespace).Get(awName)
 		if err != nil {
 			return
 		}
-		fwKey, err := controller.KeyFunc(fw)
+		awKey, err := controller.KeyFunc(aw)
 		if err != nil {
 			return
 		}
 		glog.V(4).Infof("Annotated pod %s/%s deleted through %v, timestamp %+v: %#v.",
 			pod.Namespace, pod.Name, runtime.GetCaller(), pod.DeletionTimestamp, pod)
-		fwc.expectations.DeletionObserved(fwKey, controller.PodKey(pod))
-		fwc.enqueueFimWatcher(fw)
+		awc.expectations.DeletionObserved(awKey, controller.PodKey(pod))
+		awc.enqueueArgusWatcher(aw)
 	}
 
-	// If this pod is a FimD pod, we need to first destroy the connection to
-	// the gRPC server run on the daemon. Then remove relevant FimWatcher
+	// If this pod is a ArgusD pod, we need to first destroy the connection to
+	// the gRPC server run on the daemon. Then remove relevant ArgusWatcher
 	// annotations from pods on the same node.
-	if label, _ := pod.Labels["daemon"]; label == "fimd" {
-		hostURL, err := fwc.getHostURL(pod)
+	if label, _ := pod.Labels["daemon"]; label == "argusd" {
+		hostURL, err := awc.getHostURL(pod)
 		if err != nil {
 			return
 		}
 		// Destroy connections to gRPC server on daemon.
-		fwc.fimdConnections.Delete(hostURL)
+		awc.argusdConnections.Delete(hostURL)
 
-		allPods, err := fwc.podLister.List(labels.Everything())
+		allPods, err := awc.podLister.List(labels.Everything())
 		if err != nil {
 			return
 		}
@@ -470,60 +471,60 @@ func (fwc *FimWatcherController) deletePod(obj interface{}) {
 			if po.Spec.NodeName != pod.Spec.NodeName {
 				continue
 			}
-			//delete(po.Annotations, FimWatcherAnnotationKey)
-			updateAnnotations([]string{FimWatcherAnnotationKey}, nil, po)
+			//delete(po.Annotations, ArgusWatcherAnnotationKey)
+			updateAnnotations([]string{ArgusWatcherAnnotationKey}, nil, po)
 		}
 		glog.V(4).Infof("Daemon pod %s/%s deleted through %v, timestamp %+v: %#v.",
 			pod.Namespace, pod.Name, runtime.GetCaller(), pod.DeletionTimestamp, pod)
 	}
 }
 
-// enqueueFimWatcher takes a FimWatcher resource and converts it into a
+// enqueueArgusWatcher takes a ArgusWatcher resource and converts it into a
 // namespace/name string which is then put onto the workqueue. This method
-// should not be passed resources of any type other than FimWatcher.
-func (fwc *FimWatcherController) enqueueFimWatcher(obj interface{}) {
+// should not be passed resources of any type other than ArgusWatcher.
+func (awc *ArgusWatcherController) enqueueArgusWatcher(obj interface{}) {
 	key, err := controller.KeyFunc(obj)
 	if err != nil {
 		runtime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
 		return
 	}
-	fwc.workqueue.AddRateLimited(key)
+	awc.workqueue.AddRateLimited(key)
 }
 
-// enqueueFimWatcherAfter ...
-func (fwc *FimWatcherController) enqueueFimWatcherAfter(obj interface{}, after time.Duration) {
+// enqueueArgusWatcherAfter ...
+func (awc *ArgusWatcherController) enqueueArgusWatcherAfter(obj interface{}, after time.Duration) {
 	key, err := controller.KeyFunc(obj)
 	if err != nil {
 		runtime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
 		return
 	}
-	fwc.workqueue.AddAfter(key, after)
+	awc.workqueue.AddAfter(key, after)
 }
 
 // runWorker is a long-running function that will continually call the
 // processNextWorkItem function in order to read and process a message on the
 // workqueue.
-func (fwc *FimWatcherController) runWorker() {
-	for fwc.processNextWorkItem() {
+func (awc *ArgusWatcherController) runWorker() {
+	for awc.processNextWorkItem() {
 	}
 }
 
 // processNextWorkItem will read a single work item off the workqueue and
 // attempt to process it, by calling the syncHandler.
-func (fwc *FimWatcherController) processNextWorkItem() bool {
-	obj, shutdown := fwc.workqueue.Get()
+func (awc *ArgusWatcherController) processNextWorkItem() bool {
+	obj, shutdown := awc.workqueue.Get()
 	if shutdown {
 		return false
 	}
 
-	// We wrap this block in a func so we can defer fwc.workqueue.Done.
+	// We wrap this block in a func so we can defer awc.workqueue.Done.
 	err := func(obj interface{}) error {
 		// We call Done here so the workqueue knows we have finished processing
 		// this item. We also must remember to call Forget if we do not want
 		// this work item being re-queued. For example, we do not call Forget
 		// if a transient error occurs, instead the item is put back on the
 		// workqueue and attempted again after a back-off period.
-		defer fwc.workqueue.Done(obj)
+		defer awc.workqueue.Done(obj)
 		var key string
 		var ok bool
 		// We expect strings to come off the workqueue. These are of the form
@@ -534,37 +535,37 @@ func (fwc *FimWatcherController) processNextWorkItem() bool {
 			// As the item in the workqueue is actually invalid, we call Forget
 			// here else we'd go into a loop of attempting to process a work
 			// item that is invalid.
-			fwc.workqueue.Forget(obj)
+			awc.workqueue.Forget(obj)
 			runtime.HandleError(fmt.Errorf("Expected string in workqueue but got %#v", obj))
 			return nil
 		}
 		// Run the syncHandler, passing it the namespace/name string of the
-		// FimWatcher resource to be synced.
-		if err := fwc.syncHandler(key); err != nil {
+		// ArgusWatcher resource to be synced.
+		if err := awc.syncHandler(key); err != nil {
 			return fmt.Errorf("Error syncing '%s': %s", key, err.Error())
 		}
 		// Finally, if no error occurs we Forget this item so it does not get
 		// queued again until another change happens.
-		fwc.workqueue.Forget(obj)
+		awc.workqueue.Forget(obj)
 		glog.V(4).Infof("Successfully synced '%s'", key)
 		return nil
 	}(obj)
 
 	if err != nil {
 		runtime.HandleError(err)
-		fwc.workqueue.AddRateLimited(obj)
+		awc.workqueue.AddRateLimited(obj)
 		return true
 	}
 	return true
 }
 
-// syncFimWatcher compares the actual state with the desired, and attempts to
-// converge the two. It then updates the Status block of the FimWatcher
+// syncArgusWatcher compares the actual state with the desired, and attempts to
+// converge the two. It then updates the Status block of the ArgusWatcher
 // resource with the current status of the resource.
-func (fwc *FimWatcherController) syncFimWatcher(key string) error {
+func (awc *ArgusWatcherController) syncArgusWatcher(key string) error {
 	startTime := time.Now()
 	defer func() {
-		glog.V(4).Infof("Finished syncing %v %q (%v)", fwc.Kind, key, time.Since(startTime))
+		glog.V(4).Infof("Finished syncing %v %q (%v)", awc.Kind, key, time.Since(startTime))
 	}()
 
 	// Convert the namespace/name string into a distinct namespace and name.
@@ -574,44 +575,45 @@ func (fwc *FimWatcherController) syncFimWatcher(key string) error {
 		return nil
 	}
 
-	// Get the FimWatcher resource with this namespace/name.
-	fw, err := fwc.fwLister.FimWatchers(namespace).Get(name)
-	// The FimWatcher resource may no longer exist, in which case we stop
+	// Get the ArgusWatcher resource with this namespace/name.
+	aw, err := awc.awLister.ArgusWatchers(namespace).Get(name)
+	// The ArgusWatcher resource may no longer exist, in which case we stop
 	// processing.
 	if errorsutil.IsNotFound(err) {
 		// @TODO: cleanup: delete annotations from any pods that have them
-		runtime.HandleError(fmt.Errorf("%v '%s' in work queue no longer exists", fwc.Kind, key))
-		fwc.expectations.DeleteExpectations(key)
+		runtime.HandleError(fmt.Errorf("%v '%s' in work queue no longer exists", awc.Kind, key))
+		awc.expectations.DeleteExpectations(key)
 		return nil
 	}
 	if err != nil {
 		return err
 	}
 
-	fwNeedsSync := fwc.expectations.SatisfiedExpectations(key)
+	awNeedsSync := awc.expectations.SatisfiedExpectations(key)
 
-	// Get the diff between all pods and pods that match the FimWatch selector.
+	// Get the diff between all pods and pods that match the ArgusWatch
+	// selector.
 	var rmPods []*corev1.Pod
 	var addPods []*corev1.Pod
 
-	selector, err := metav1.LabelSelectorAsSelector(fw.Spec.Selector)
+	selector, err := metav1.LabelSelectorAsSelector(aw.Spec.Selector)
 	if err != nil {
 		runtime.HandleError(fmt.Errorf("Error converting pod selector to selector: %v", err))
 		return nil
 	}
-	selectedPods, err := fwc.podLister.Pods(fw.Namespace).List(selector)
+	selectedPods, err := awc.podLister.Pods(aw.Namespace).List(selector)
 	if err != nil {
 		return err
 	}
 
-	// @TODO: only get pods with annotation: FimWatcherAnnotationKey
-	allPods, err := fwc.podLister.Pods(fw.Namespace).List(labels.Everything())
+	// @TODO: Only get pods with annotation: ArgusWatcherAnnotationKey.
+	allPods, err := awc.podLister.Pods(aw.Namespace).List(labels.Everything())
 	if err != nil {
 		return err
 	}
 
-	// Get current watch state from FimD daemon.
-	watchStates, err := fwc.getWatchStates()
+	// Get current watch state from ArgusD daemon.
+	watchStates, err := awc.getWatchStates()
 	if err != nil {
 		return err
 	}
@@ -621,7 +623,7 @@ func (fwc *FimWatcherController) syncFimWatcher(key string) error {
 			!podutil.IsPodReady(pod) {
 			continue
 		}
-		if wsFound := fwc.isPodInWatchState(pod, watchStates); !wsFound {
+		if wsFound := awc.isPodInWatchState(pod, watchStates); !wsFound {
 			var found bool
 			updatePodQueue.Range(func(k, v interface{}) bool {
 				// Check if pod is already in updatePodQueue.
@@ -639,7 +641,7 @@ func (fwc *FimWatcherController) syncFimWatcher(key string) error {
 	}
 
 	for _, pod := range allPods {
-		if wsFound := fwc.isPodInWatchState(pod, watchStates); !wsFound {
+		if wsFound := awc.isPodInWatchState(pod, watchStates); !wsFound {
 			continue
 		}
 
@@ -651,7 +653,7 @@ func (fwc *FimWatcherController) syncFimWatcher(key string) error {
 			}
 		}
 		if pod.DeletionTimestamp != nil || !selFound {
-			if value, found := pod.Annotations[FimWatcherAnnotationKey]; found && value == fw.Name {
+			if value, found := pod.Annotations[ArgusWatcherAnnotationKey]; found && value == aw.Name {
 				rmPods = append(rmPods, pod)
 				continue
 			}
@@ -659,72 +661,72 @@ func (fwc *FimWatcherController) syncFimWatcher(key string) error {
 	}
 
 	var manageSubjectsErr error
-	if (fwNeedsSync && fw.DeletionTimestamp == nil) ||
+	if (awNeedsSync && aw.DeletionTimestamp == nil) ||
 		len(rmPods) > 0 ||
 		len(addPods) > 0 {
-		manageSubjectsErr = fwc.manageObserverPods(rmPods, addPods, fw)
+		manageSubjectsErr = awc.manageObserverPods(rmPods, addPods, aw)
 	}
 
-	fw = fw.DeepCopy()
-	newStatus := calculateStatus(fw, selectedPods, manageSubjectsErr)
+	aw = aw.DeepCopy()
+	newStatus := calculateStatus(aw, selectedPods, manageSubjectsErr)
 
 	// Always updates status as pods come up or die.
-	updatedFW, err := updateFimWatcherStatus(fwc.fimclientset.FimcontrollerV1alpha1().FimWatchers(fw.Namespace), fw, newStatus)
+	updatedAW, err := updateArgusWatcherStatus(awc.argusclientset.ArguscontrollerV1alpha1().ArgusWatchers(aw.Namespace), aw, newStatus)
 	if err != nil {
-		// Multiple things could lead to this update failing. Requeuing the fim
-		// watcher ensures. Returning an error causes a requeue without forcing
-		// a hotloop.
+		// Multiple things could lead to this update failing. Requeuing the
+		// argus watcher ensures. Returning an error causes a requeue without
+		// forcing a hotloop.
 		return err
 	}
 
-	// Resync the FimWatcher after MinReadySeconds as a last line of defense to
-	// guard against clock-skew.
+	// Resync the ArgusWatcher after MinReadySeconds as a last line of defense
+	// to guard against clock-skew.
 	if manageSubjectsErr == nil &&
 		minReadySeconds > 0 &&
-		updatedFW.Status.WatchedPods != int32(len(selectedPods)) {
-		fwc.enqueueFimWatcherAfter(updatedFW, time.Duration(minReadySeconds)*time.Second)
+		updatedAW.Status.WatchedPods != int32(len(selectedPods)) {
+		awc.enqueueArgusWatcherAfter(updatedAW, time.Duration(minReadySeconds)*time.Second)
 	}
 	return manageSubjectsErr
 }
 
-// manageObserverPods checks and updates observers for the given FimWatcher.
-// It will requeue the FimWatcher in case of an error while creating/deleting
+// manageObserverPods checks and updates observers for the given ArgusWatcher.
+// It will requeue the ArgusWatcher in case of an error while creating/deleting
 // pods.
-func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPods []*corev1.Pod, fw *fimv1alpha1.FimWatcher) error {
-	fwKey, err := controller.KeyFunc(fw)
+func (awc *ArgusWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPods []*corev1.Pod, aw *argusv1alpha1.ArgusWatcher) error {
+	awKey, err := controller.KeyFunc(aw)
 	if err != nil {
-		runtime.HandleError(fmt.Errorf("Couldn't get key for %v %#v: %v", fwc.Kind, fw, err))
+		runtime.HandleError(fmt.Errorf("Couldn't get key for %v %#v: %v", awc.Kind, aw, err))
 		return nil
 	}
 
 	if len(rmPods) > 0 {
-		fwc.expectations.ExpectDeletions(fwKey, getPodKeys(rmPods))
-		glog.Infof("Too many watchers for %v %s/%s, deleting %d", fwc.Kind, fw.Namespace, fw.Name, len(rmPods))
+		awc.expectations.ExpectDeletions(awKey, getPodKeys(rmPods))
+		glog.Infof("Too many watchers for %v %s/%s, deleting %d", awc.Kind, aw.Namespace, aw.Name, len(rmPods))
 	}
 	if len(addPods) > 0 {
-		fwc.expectations.ExpectCreations(fwKey, len(addPods))
-		glog.Infof("Too few watchers for %v %s/%s, creating %d", fwc.Kind, fw.Namespace, fw.Name, len(addPods))
+		awc.expectations.ExpectCreations(awKey, len(addPods))
+		glog.Infof("Too few watchers for %v %s/%s, creating %d", awc.Kind, aw.Namespace, aw.Name, len(addPods))
 	}
 
 	var podsToUpdate []*corev1.Pod
 
 	for _, pod := range rmPods {
-		if _, found := pod.Annotations[FimWatcherAnnotationKey]; found {
+		if _, found := pod.Annotations[ArgusWatcherAnnotationKey]; found {
 			cids := getPodContainerIDs(pod)
 			if len(cids) > 0 {
-				hostURL, err := fwc.getHostURLFromSiblingPod(pod)
+				hostURL, err := awc.getHostURLFromSiblingPod(pod)
 				if err != nil {
 					return err
 				}
-				fc, err := fwc.getFimdConnection(hostURL)
+				fc, err := awc.getArgusdConnection(hostURL)
 				if err != nil {
 					return err
 				}
 				if fc.handle == nil {
-					return fmt.Errorf("fimd connection has no handle %#v", fc)
+					return fmt.Errorf("argusd connection has no handle %#v", fc)
 				}
 
-				if err := fc.RemoveFimdWatcher(&pb.FimdConfig{
+				if err := fc.RemoveArgusdWatcher(&pb.ArgusdConfig{
 					NodeName: pod.Spec.NodeName,
 					PodName:  pod.Name,
 					Pid:      fc.handle.Pid,
@@ -732,12 +734,12 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 					return err
 				}
 
-				fwc.expectations.DeletionObserved(fwKey, controller.PodKey(pod))
-				fwc.recorder.Eventf(fw, corev1.EventTypeNormal, SuccessRemoved, MessageResourceRemoved, pod.Spec.NodeName)
+				awc.expectations.DeletionObserved(awKey, controller.PodKey(pod))
+				awc.recorder.Eventf(aw, corev1.EventTypeNormal, SuccessRemoved, MessageResourceRemoved, pod.Spec.NodeName)
 			}
 		}
 
-		err := updateAnnotations([]string{FimWatcherAnnotationKey}, nil, pod)
+		err := updateAnnotations([]string{ArgusWatcherAnnotationKey}, nil, pod)
 		if err != nil {
 			return err
 		}
@@ -745,9 +747,9 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 	}
 
 	for _, pod := range addPods {
-		go fwc.updatePodOnceValid(pod.Name, fw)
+		go awc.updatePodOnceValid(pod.Name, aw)
 
-		err := updateAnnotations(nil, map[string]string{FimWatcherAnnotationKey: fw.Name}, pod)
+		err := updateAnnotations(nil, map[string]string{ArgusWatcherAnnotationKey: aw.Name}, pod)
 		if err != nil {
 			return err
 		}
@@ -758,8 +760,8 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 	}
 
 	for _, pod := range podsToUpdate {
-		updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(pod.Namespace), fwc.podLister,
-			fw.Namespace, pod.Name, func(po *corev1.Pod) error {
+		updatePodWithRetries(awc.kubeclientset.CoreV1().Pods(pod.Namespace), awc.podLister,
+			aw.Namespace, pod.Name, func(po *corev1.Pod) error {
 				po.Annotations = pod.Annotations
 				return nil
 			})
@@ -768,47 +770,47 @@ func (fwc *FimWatcherController) manageObserverPods(rmPods []*corev1.Pod, addPod
 	return nil
 }
 
-// getPodFimWatchers returns a list of FimWatchers matching the given pod.
-func (fwc *FimWatcherController) getPodFimWatchers(pod *corev1.Pod) []*fimv1alpha1.FimWatcher {
+// getPodArgusWatchers returns a list of ArgusWatchers matching the given pod.
+func (awc *ArgusWatcherController) getPodArgusWatchers(pod *corev1.Pod) []*argusv1alpha1.ArgusWatcher {
 	if len(pod.Labels) == 0 {
-		glog.V(4).Infof("no FimWatchers found for pod %v because it has no labels", pod.Name)
+		glog.V(4).Infof("no ArgusWatchers found for pod %v because it has no labels", pod.Name)
 		return nil
 	}
 
-	list, err := fwc.fwLister.FimWatchers(pod.Namespace).List(labels.Everything())
+	list, err := awc.awLister.ArgusWatchers(pod.Namespace).List(labels.Everything())
 	if err != nil {
 		return nil
 	}
 
-	var fws []*fimv1alpha1.FimWatcher
-	for _, fw := range list {
-		if fw.Namespace != pod.Namespace {
+	var aws []*argusv1alpha1.ArgusWatcher
+	for _, aw := range list {
+		if aw.Namespace != pod.Namespace {
 			continue
 		}
-		selector, err := metav1.LabelSelectorAsSelector(fw.Spec.Selector)
+		selector, err := metav1.LabelSelectorAsSelector(aw.Spec.Selector)
 		if err != nil {
 			runtime.HandleError(fmt.Errorf("invalid selector: %v", err))
 			return nil
 		}
-		// If a FimWatcher with a nil or empty selector creeps in, it should
+		// If a ArgusWatcher with a nil or empty selector creeps in, it should
 		// match nothing, not everything.
 		if selector.Empty() ||
 			!selector.Matches(labels.Set(pod.Labels)) {
 			continue
 		}
-		fws = append(fws, fw)
+		aws = append(aws, aw)
 	}
 
-	if len(fws) == 0 {
-		glog.V(4).Infof("could not find FimWatcher for pod %s in namespace %s with labels: %v", pod.Name, pod.Namespace, pod.Labels)
+	if len(aws) == 0 {
+		glog.V(4).Infof("could not find ArgusWatcher for pod %s in namespace %s with labels: %v", pod.Name, pod.Namespace, pod.Labels)
 		return nil
 	}
-	if len(fws) > 1 {
+	if len(aws) > 1 {
 		// ControllerRef will ensure we don't do anything crazy, but more than
 		//one item in this list nevertheless constitutes user error.
-		runtime.HandleError(fmt.Errorf("user error; more than one %v is selecting pods with labels: %+v", fwc.Kind, pod.Labels))
+		runtime.HandleError(fmt.Errorf("user error; more than one %v is selecting pods with labels: %+v", awc.Kind, pod.Labels))
 	}
-	return fws
+	return aws
 }
 
 // getPodKeys returns a list of pod key strings from array of pod objects.
@@ -821,20 +823,20 @@ func getPodKeys(pods []*corev1.Pod) []string {
 }
 
 // updatePodOnceValid first retries getting the pod hostURL to connect to the
-// FimD gRPC server. Then it retries adding a new FimD watcher by calling the
-// gRPC server CreateWatch function; on success it updates the appropriate
-// FimWatcher annotations so we can mark it now "watched".
-func (fwc *FimWatcherController) updatePodOnceValid(podName string, fw *fimv1alpha1.FimWatcher) {
+// ArgusD gRPC server. Then it retries adding a new ArgusD watcher by calling
+// the gRPC server CreateWatch function; on success it updates the appropriate
+// ArgusWatcher annotations so we can mark it now "watched".
+func (awc *ArgusWatcherController) updatePodOnceValid(podName string, aw *argusv1alpha1.ArgusWatcher) {
 	var cids []string
 	var nodeName, hostURL string
 
 	// Run this function with a retry, to make sure we get a connection to the
 	// daemon pod. If we exhaust all attempts, process error accordingly.
-	if retryErr := retry.RetryOnConflict(fwc.backoff, func() (err error) {
+	if retryErr := retry.RetryOnConflict(awc.backoff, func() (err error) {
 		// Be sure to clear all slice elements first in case of a retry.
 		cids = cids[:0]
 
-		pod, err := fwc.podLister.Pods(fw.Namespace).Get(podName)
+		pod, err := awc.podLister.Pods(aw.Namespace).Get(podName)
 		if err != nil {
 			return err
 		}
@@ -860,7 +862,7 @@ func (fwc *FimWatcherController) updatePodOnceValid(podName string, fw *fimv1alp
 		}
 
 		var hostErr error
-		hostURL, hostErr = fwc.getHostURLFromSiblingPod(pod)
+		hostURL, hostErr = awc.getHostURLFromSiblingPod(pod)
 		if hostErr != nil || hostURL == "" {
 			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
 				pod.Name, errors.New("pod host is not available"))
@@ -873,8 +875,8 @@ func (fwc *FimWatcherController) updatePodOnceValid(podName string, fw *fimv1alp
 	// Run this function with a retry, to make sure we get a successful
 	// response from the daemon. If we exhaust all attempts, process error
 	// accordingly.
-	if retryErr := retry.RetryOnConflict(fwc.backoff, func() (err error) {
-		pod, err := fwc.podLister.Pods(fw.Namespace).Get(podName)
+	if retryErr := retry.RetryOnConflict(awc.backoff, func() (err error) {
+		pod, err := awc.podLister.Pods(aw.Namespace).Get(podName)
 		if err != nil {
 			return err
 		}
@@ -882,26 +884,26 @@ func (fwc *FimWatcherController) updatePodOnceValid(podName string, fw *fimv1alp
 			return fmt.Errorf("pod is being deleted %v", pod.Name)
 		}
 
-		fc, err := fwc.getFimdConnection(hostURL)
+		fc, err := awc.getArgusdConnection(hostURL)
 		if err != nil {
 			return errorsutil.NewConflict(schema.GroupResource{Resource: "nodes"},
-				nodeName, errors.New("failed to get fimd connection"))
+				nodeName, errors.New("failed to get argusd connection"))
 		}
-		if handle, err := fc.AddFimdWatcher(&pb.FimdConfig{
-			Name:      fw.Name,
+		if handle, err := fc.AddArgusdWatcher(&pb.ArgusdConfig{
+			Name:      aw.Name,
 			NodeName:  nodeName,
 			PodName:   pod.Name,
 			Cid:       cids,
-			Subject:   fwc.getFimWatcherSubjects(fw),
-			LogFormat: fw.Spec.LogFormat,
+			Subject:   awc.getArgusWatcherSubjects(aw),
+			LogFormat: aw.Spec.LogFormat,
 		}); err == nil {
 			fc.handle = handle
 		}
 		return err
 	}); retryErr != nil {
-		updatePodWithRetries(fwc.kubeclientset.CoreV1().Pods(fw.Namespace), fwc.podLister,
-			fw.Namespace, podName, func(po *corev1.Pod) error {
-				pod, err := fwc.podLister.Pods(fw.Namespace).Get(podName)
+		updatePodWithRetries(awc.kubeclientset.CoreV1().Pods(aw.Namespace), awc.podLister,
+			aw.Namespace, podName, func(po *corev1.Pod) error {
+				pod, err := awc.podLister.Pods(aw.Namespace).Get(podName)
 				if err != nil {
 					return err
 				}
@@ -910,30 +912,30 @@ func (fwc *FimWatcherController) updatePodOnceValid(podName string, fw *fimv1alp
 			})
 	}
 
-	go fwc.removePodFromUpdateQueue(podName)
+	go awc.removePodFromUpdateQueue(podName)
 
-	fwKey, err := controller.KeyFunc(fw)
+	awKey, err := controller.KeyFunc(aw)
 	if err != nil {
 		return
 	}
-	fwc.expectations.CreationObserved(fwKey)
-	fwc.recorder.Eventf(fw, corev1.EventTypeNormal, SuccessAdded, MessageResourceAdded, nodeName)
+	awc.expectations.CreationObserved(awKey)
+	awc.recorder.Eventf(aw, corev1.EventTypeNormal, SuccessAdded, MessageResourceAdded, nodeName)
 }
 
-// getHostURL constructs a URL from the pod's hostIP and hard-coded FimD port.
-// The pod specified in this function is assumed to be a daemon pod.
-// If fimdURL was specified to the controller, to connect to an out-of-cluster
-// daemon, use this instead.
-func (fwc *FimWatcherController) getHostURL(pod *corev1.Pod) (string, error) {
-	if fwc.fimdURL != "" {
-		return fwc.fimdURL, nil
+// getHostURL constructs a URL from the pod's hostIP and hard-coded ArgusD
+// port.  The pod specified in this function is assumed to be a daemon pod.
+// If argusdURL was specified to the controller, to connect to an
+// out-of-cluster daemon, use this instead.
+func (awc *ArgusWatcherController) getHostURL(pod *corev1.Pod) (string, error) {
+	if awc.argusdURL != "" {
+		return awc.argusdURL, nil
 	}
 
 	if pod.Status.PodIP == "" {
-		return "", fmt.Errorf("cannot locate fimd pod on node %v", pod.Spec.NodeName)
+		return "", fmt.Errorf("cannot locate argusd pod on node %v", pod.Spec.NodeName)
 	}
 
-	endpoint, err := fwc.endpointsLister.Endpoints(fimNamespace).Get(fimdService)
+	endpoint, err := awc.endpointsLister.Endpoints(argusNamespace).Get(argusdService)
 	if err != nil {
 		return "", err
 	}
@@ -947,7 +949,7 @@ func (fwc *FimWatcherController) getHostURL(pod *corev1.Pod) (string, error) {
 			}
 		}
 		for _, port := range subset.Ports {
-			if port.Name == fimdSvcPortName {
+			if port.Name == argusdSvcPortName {
 				epPort = port.Port
 			}
 		}
@@ -959,26 +961,26 @@ func (fwc *FimWatcherController) getHostURL(pod *corev1.Pod) (string, error) {
 }
 
 // getHostURLFromSiblingPod constructs a URL from a daemon pod running on the
-// same host; it uses the daemon pod's hostIP and hard-coded FimD port. The pod
-// specified in this function is assumed to be a non-daemon pod.
-// If fimdURL was specified to the controller, to connect to an out-of-cluster
+// same host; it uses the daemon pod's hostIP and hard-coded ArgusD port. The
+// pod specified in this function is assumed to be a non-daemon pod. If
+// argusdURL was specified to the controller, to connect to an out-of-cluster
 // daemon, use this instead.
-func (fwc *FimWatcherController) getHostURLFromSiblingPod(pod *corev1.Pod) (string, error) {
-	if fwc.fimdURL != "" {
-		return fwc.fimdURL, nil
+func (awc *ArgusWatcherController) getHostURLFromSiblingPod(pod *corev1.Pod) (string, error) {
+	if awc.argusdURL != "" {
+		return awc.argusdURL, nil
 	}
 
-	selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{MatchLabels: fimdSelector})
+	selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{MatchLabels: argusdSelector})
 	if err != nil {
 		return "", err
 	}
-	daemonPods, err := fwc.podLister.Pods(fimNamespace).List(selector)
+	daemonPods, err := awc.podLister.Pods(argusNamespace).List(selector)
 	if err != nil {
 		return "", err
 	}
 	for _, daemonPod := range daemonPods {
 		if daemonPod.Spec.NodeName == pod.Spec.NodeName {
-			hostURL, err := fwc.getHostURL(daemonPod)
+			hostURL, err := awc.getHostURL(daemonPod)
 			if err != nil {
 				return "", err
 			}
@@ -986,15 +988,15 @@ func (fwc *FimWatcherController) getHostURLFromSiblingPod(pod *corev1.Pod) (stri
 		}
 	}
 
-	return "", fmt.Errorf("cannot locate fimd pod on node %v", pod.Spec.NodeName)
+	return "", fmt.Errorf("cannot locate argusd pod on node %v", pod.Spec.NodeName)
 }
 
-// getFimWatcherSubjects is a helper function that given a FimWatcher,
-// constructs a list of Subjects to be used when creating a new FimD watcher.
-func (fwc *FimWatcherController) getFimWatcherSubjects(fw *fimv1alpha1.FimWatcher) []*pb.FimWatcherSubject {
-	var subjects []*pb.FimWatcherSubject
-	for _, s := range fw.Spec.Subjects {
-		subjects = append(subjects, &pb.FimWatcherSubject{
+// getArgusWatcherSubjects is a helper function that given a ArgusWatcher,
+// constructs a list of Subjects to be used when creating a new ArgusD watcher.
+func (awc *ArgusWatcherController) getArgusWatcherSubjects(aw *argusv1alpha1.ArgusWatcher) []*pb.ArgusWatcherSubject {
+	var subjects []*pb.ArgusWatcherSubject
+	for _, s := range aw.Spec.Subjects {
+		subjects = append(subjects, &pb.ArgusWatcherSubject{
 			Path:      s.Paths,
 			Event:     s.Events,
 			Ignore:    s.Ignore,
@@ -1007,25 +1009,25 @@ func (fwc *FimWatcherController) getFimWatcherSubjects(fw *fimv1alpha1.FimWatche
 	return subjects
 }
 
-// getFimdConnection returns a FimdConnection object given a hostURL.
-func (fwc *FimWatcherController) getFimdConnection(hostURL string) (*FimdConnection, error) {
-	if fc, ok := fwc.fimdConnections.Load(hostURL); ok == true {
-		return fc.(*FimdConnection), nil
+// getArgusdConnection returns a argusdConnection object given a hostURL.
+func (awc *ArgusWatcherController) getArgusdConnection(hostURL string) (*argusdConnection, error) {
+	if fc, ok := awc.argusdConnections.Load(hostURL); ok == true {
+		return fc.(*argusdConnection), nil
 	}
-	return nil, fmt.Errorf("could not connect to fimd at hostURL %v", hostURL)
+	return nil, fmt.Errorf("could not connect to argusd at hostURL %v", hostURL)
 }
 
 // GetWatchStates is a helper function that gets all the current watch states
-// from every FimD pod running in the clutser. This is used in the syncHandler
-// to run exactly once each sync.
-func (fwc *FimWatcherController) getWatchStates() ([][]*pb.FimdHandle, error) {
-	var watchStates [][]*pb.FimdHandle
+// from every ArgusD pod running in the clutser. This is used in the
+// syncHandler to run exactly once each sync.
+func (awc *ArgusWatcherController) getWatchStates() ([][]*pb.ArgusdHandle, error) {
+	var watchStates [][]*pb.ArgusdHandle
 
-	// If specifying a fimdURL for a daemon that is located out-of-cluster,
-	// we assume a single FimD pod in the cluster; get the watch state of this
-	// daemon pod only.
-	if fwc.fimdURL != "" {
-		fc, err := fwc.getFimdConnection(fwc.fimdURL)
+	// If specifying a argusdURL for a daemon that is located out-of-cluster,
+	// we assume a single ArgusD pod in the cluster; get the watch state of
+	// this daemon pod only.
+	if awc.argusdURL != "" {
+		fc, err := awc.getArgusdConnection(awc.argusdURL)
 		if err != nil {
 			return nil, err
 		}
@@ -1037,20 +1039,20 @@ func (fwc *FimWatcherController) getWatchStates() ([][]*pb.FimdHandle, error) {
 		return watchStates, nil
 	}
 
-	selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{MatchLabels: fimdSelector})
+	selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{MatchLabels: argusdSelector})
 	if err != nil {
 		return nil, err
 	}
-	daemonPods, err := fwc.podLister.Pods(fimNamespace).List(selector)
+	daemonPods, err := awc.podLister.Pods(argusNamespace).List(selector)
 	if err != nil {
 		return nil, err
 	}
 	for _, pod := range daemonPods {
-		hostURL, err := fwc.getHostURL(pod)
+		hostURL, err := awc.getHostURL(pod)
 		if err != nil {
 			continue
 		}
-		fc, err := fwc.getFimdConnection(hostURL)
+		fc, err := awc.getArgusdConnection(hostURL)
 		if err != nil {
 			return nil, err
 		}
@@ -1065,7 +1067,7 @@ func (fwc *FimWatcherController) getWatchStates() ([][]*pb.FimdHandle, error) {
 
 // isPodInWatchState is a helper function that given a pod and list of watch
 // states, find if pod name appears anywhere in the list.
-func (fwc *FimWatcherController) isPodInWatchState(pod *corev1.Pod, watchStates [][]*pb.FimdHandle) bool {
+func (awc *ArgusWatcherController) isPodInWatchState(pod *corev1.Pod, watchStates [][]*pb.ArgusdHandle) bool {
 	var found bool
 	for _, watchState := range watchStates {
 		for _, ws := range watchState {
@@ -1081,6 +1083,6 @@ func (fwc *FimWatcherController) isPodInWatchState(pod *corev1.Pod, watchStates 
 // removePodFromUpdateQueue is a helper function that given a pod name, remove
 // it from the update pod queue in order to be marked for a new update in the
 // future.
-func (fwc *FimWatcherController) removePodFromUpdateQueue(podName string) {
+func (awc *ArgusWatcherController) removePodFromUpdateQueue(podName string) {
 	updatePodQueue.Delete(podName)
 }

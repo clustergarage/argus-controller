@@ -1,4 +1,4 @@
-package fimcontroller
+package arguscontroller
 
 import (
 	cryptotls "crypto/tls"
@@ -26,40 +26,45 @@ import (
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/util/retry"
 
-	fimv1alpha1 "clustergarage.io/fim-controller/pkg/apis/fimcontroller/v1alpha1"
-	fimv1alpha1client "clustergarage.io/fim-controller/pkg/client/clientset/versioned/typed/fimcontroller/v1alpha1"
-	pb "github.com/clustergarage/fim-proto/golang"
+	argusv1alpha1 "clustergarage.io/argus-controller/pkg/apis/arguscontroller/v1alpha1"
+	argusv1alpha1client "clustergarage.io/argus-controller/pkg/client/clientset/versioned/typed/arguscontroller/v1alpha1"
+	pb "github.com/clustergarage/argus-proto/golang"
 )
 
 const (
-	prometheusMetricName = "fim_k8s_events_total"
-	prometheusMetricHelp = "Count of inotify events observed by the FimD daemon."
+	prometheusMetricName = "argus_events_total"
+	prometheusMetricHelp = "Count of inotify events observed by the ArgusD daemon."
 )
 
 var (
-	// TLS ...
+	// TLS specifies whether to connect to the ArgusD server using TLS.
 	TLS bool
-	// TLSSkipVerify ...
+	// TLSSkipVerify specifies not to verify the certificate presented by the
+	// server.
 	TLSSkipVerify bool
-	// TLSCACert ...
+	// TLSCACert is the file containing trusted certificates for verifying the
+	// server.
 	TLSCACert string
-	// TLSClientCert ...
+	// TLSClientCert is the file containing the client certificate for
+	// authenticating with the server.
 	TLSClientCert string
-	// TLSClientKey ...
+	// TLSClientKey is the file containing the client private key for
+	// authenticating with the server.
 	TLSClientKey string
-	// TLSServerName ...
+	// TLSServerName overrides the hostname used to verify the server
+	// certficate.
 	TLSServerName string
 
 	annotationMux = &sync.RWMutex{}
 )
 
-// FimdConnection defines a FimD gRPC server URL and a gRPC client to connect
-// to in order to make add and remove watcher calls, as well as getting the
-// current state of the daemon to keep the controller<-->daemon in sync.
-type FimdConnection struct {
+// argusdConnection defines a ArgusD gRPC server URL and a gRPC client to
+// connect to in order to make add and remove watcher calls, as well as getting
+// the current state of the daemon to keep the controller<-->daemon in sync.
+type argusdConnection struct {
 	hostURL string
-	handle  *pb.FimdHandle
-	client  pb.FimdClient
+	handle  *pb.ArgusdHandle
+	client  pb.ArgusdClient
 	counter *prometheus.CounterVec
 }
 
@@ -67,7 +72,7 @@ type FimdConnection struct {
 // grpc.Dial to connect to a daemon server. This function allows both secure
 // and insecure variants.
 func BuildAndStoreDialOptions(tls, tlsSkipVerify bool, caCert, clientCert, clientKey, serverName string) (grpc.DialOption, error) {
-	// Store passed-in configuration to later create FimdConnections.
+	// Store passed-in configuration to later create argusdConnections.
 	TLS = tls
 	TLSSkipVerify = tlsSkipVerify
 	TLSCACert = caCert
@@ -106,11 +111,11 @@ func BuildAndStoreDialOptions(tls, tlsSkipVerify bool, caCert, clientCert, clien
 	return grpc.WithInsecure(), nil
 }
 
-// NewFimdConnection creates a new FimdConnection type given a required hostURL
-// and an optional gRPC client; if the client is not specified, this is created
-// for you here.
-func NewFimdConnection(hostURL string, opts grpc.DialOption, client ...pb.FimdClient) (*FimdConnection, error) {
-	fc := &FimdConnection{hostURL: hostURL}
+// NewArgusdConnection creates a new argusdConnection type given a required
+// hostURL and an optional gRPC client; if the client is not specified, this is
+// created for you here.
+func NewArgusdConnection(hostURL string, opts grpc.DialOption, client ...pb.ArgusdClient) (*argusdConnection, error) {
+	fc := &argusdConnection{hostURL: hostURL}
 	if len(client) > 0 {
 		fc.client = client[0]
 	} else {
@@ -122,7 +127,7 @@ func NewFimdConnection(hostURL string, opts grpc.DialOption, client ...pb.FimdCl
 		if err != nil {
 			return nil, fmt.Errorf("Could not connect: %v", err)
 		}
-		fc.client = pb.NewFimdClient(conn)
+		fc.client = pb.NewArgusdClient(conn)
 
 		// Add Prometheus counter type for tracking inotify events.
 		fc.counter = prometheus.NewCounterVec(
@@ -130,7 +135,7 @@ func NewFimdConnection(hostURL string, opts grpc.DialOption, client ...pb.FimdCl
 				Name: prometheusMetricName,
 				Help: prometheusMetricHelp,
 			},
-			[]string{"fimwatcher", "event", "nodename"},
+			[]string{"arguswatcher", "event", "nodename"},
 		)
 		prometheus.Register(fc.counter)
 		go fc.ListenForMetrics()
@@ -138,9 +143,10 @@ func NewFimdConnection(hostURL string, opts grpc.DialOption, client ...pb.FimdCl
 	return fc, nil
 }
 
-// AddFimdWatcher sends a message to the FimD daemon to create a new watcher.
-func (fc *FimdConnection) AddFimdWatcher(config *pb.FimdConfig) (*pb.FimdHandle, error) {
-	glog.Infof("Sending CreateWatch call to FimD daemon, host: %s, request: %#v)", fc.hostURL, config)
+// AddArgusdWatcher sends a message to the ArgusD daemon to create a new
+// watcher.
+func (fc *argusdConnection) AddArgusdWatcher(config *pb.ArgusdConfig) (*pb.ArgusdHandle, error) {
+	glog.Infof("Sending CreateWatch call to ArgusD daemon, host: %s, request: %#v)", fc.hostURL, config)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -150,15 +156,15 @@ func (fc *FimdConnection) AddFimdWatcher(config *pb.FimdConfig) (*pb.FimdHandle,
 	glog.Infof("Received CreateWatch response: %#v", response)
 	if err != nil || response.NodeName == "" {
 		return nil, errors.NewConflict(schema.GroupResource{Resource: "nodes"},
-			config.NodeName, fmt.Errorf(fmt.Sprintf("fimd::CreateWatch failed: %v", err)))
+			config.NodeName, fmt.Errorf(fmt.Sprintf("argusd::CreateWatch failed: %v", err)))
 	}
 	return response, nil
 }
 
-// RemoveFimdWatcher sends a message to the FimD daemon to remove an existing
-// watcher.
-func (fc *FimdConnection) RemoveFimdWatcher(config *pb.FimdConfig) error {
-	glog.Infof("Sending DestroyWatch call to FimD daemon, host: %s, request: %#v", fc.hostURL, config)
+// RemoveArgusdWatcher sends a message to the ArgusD daemon to remove an
+// existing watcher.
+func (fc *argusdConnection) RemoveArgusdWatcher(config *pb.ArgusdConfig) error {
+	glog.Infof("Sending DestroyWatch call to ArgusD daemon, host: %s, request: %#v", fc.hostURL, config)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -167,22 +173,22 @@ func (fc *FimdConnection) RemoveFimdWatcher(config *pb.FimdConfig) error {
 	_, err := fc.client.DestroyWatch(ctx, config)
 	if err != nil {
 		return errors.NewConflict(schema.GroupResource{Resource: "nodes"},
-			config.NodeName, fmt.Errorf(fmt.Sprintf("fimd::DestroyWatch failed: %v", err)))
+			config.NodeName, fmt.Errorf(fmt.Sprintf("argusd::DestroyWatch failed: %v", err)))
 	}
 	return nil
 }
 
-// GetWatchState sends a message to the FimD daemon to return the current state
-// of the watchers being watched via inotify.
-func (fc *FimdConnection) GetWatchState() ([]*pb.FimdHandle, error) {
+// GetWatchState sends a message to the ArgusD daemon to return the current
+// state of the watchers being watched via inotify.
+func (fc *argusdConnection) GetWatchState() ([]*pb.ArgusdHandle, error) {
 	ctx := context.Background()
 	defer ctx.Done()
 
-	var watchers []*pb.FimdHandle
+	var watchers []*pb.ArgusdHandle
 	stream, err := fc.client.GetWatchState(ctx, &pb.Empty{})
 	if err != nil {
 		return nil, errors.NewConflict(schema.GroupResource{Resource: "nodes"},
-			fc.hostURL, fmt.Errorf(fmt.Sprintf("fimd::GetWatchState failed: %v", err)))
+			fc.hostURL, fmt.Errorf(fmt.Sprintf("argusd::GetWatchState failed: %v", err)))
 	}
 	for {
 		watch, err := stream.Recv()
@@ -196,7 +202,7 @@ func (fc *FimdConnection) GetWatchState() ([]*pb.FimdHandle, error) {
 
 // ListenForMetrics serves a stream that the daemon will send messages on when
 // it receives an inotify event so we can then record it in Prometheus.
-func (fc *FimdConnection) ListenForMetrics() {
+func (fc *argusdConnection) ListenForMetrics() {
 	ctx := context.Background()
 	defer ctx.Done()
 
@@ -206,7 +212,7 @@ func (fc *FimdConnection) ListenForMetrics() {
 	}
 	for {
 		if metric, err := stream.Recv(); err == nil {
-			fc.counter.WithLabelValues(metric.FimWatcher, metric.Event, metric.NodeName).Inc()
+			fc.counter.WithLabelValues(metric.ArgusWatcher, metric.Event, metric.NodeName).Inc()
 		}
 	}
 }
@@ -215,53 +221,53 @@ func (fc *FimdConnection) ListenForMetrics() {
 // updatePodWithRetries.
 type updatePodFunc func(pod *corev1.Pod) error
 
-// updateFimWatcherStatus updates the status of the specified FimWatcher
+// updateArgusWatcherStatus updates the status of the specified ArgusWatcher
 // object.
-func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1alpha1.FimWatcher,
-	newStatus fimv1alpha1.FimWatcherStatus) (*fimv1alpha1.FimWatcher, error) {
+func updateArgusWatcherStatus(c argusv1alpha1client.ArgusWatcherInterface, aw *argusv1alpha1.ArgusWatcher,
+	newStatus argusv1alpha1.ArgusWatcherStatus) (*argusv1alpha1.ArgusWatcher, error) {
 
-	// This is the steady state. It happens when the FimWatcher doesn't have
+	// This is the steady state. It happens when the ArgusWatcher doesn't have
 	// any expectations, since we do a periodic relist every 30s. If the
 	// generations differ but the subjects are the same, a caller might have
 	// resized to the same subject count.
-	if fw.Status.ObservablePods == newStatus.ObservablePods &&
-		fw.Status.WatchedPods == newStatus.WatchedPods &&
-		fw.Generation == fw.Status.ObservedGeneration {
-		return fw, nil
+	if aw.Status.ObservablePods == newStatus.ObservablePods &&
+		aw.Status.WatchedPods == newStatus.WatchedPods &&
+		aw.Generation == aw.Status.ObservedGeneration {
+		return aw, nil
 	}
 	// Save the generation number we acted on, otherwise we might wrongfully
 	// indicate that we've seen a spec update when we retry.
 	// @TODO: This can clobber an update if we allow multiple agents to write
 	// to the same status.
-	newStatus.ObservedGeneration = fw.Generation
+	newStatus.ObservedGeneration = aw.Generation
 
 	var getErr, updateErr error
-	var updatedFW *fimv1alpha1.FimWatcher
-	for i, fw := 0, fw; ; i++ {
-		glog.V(4).Infof(fmt.Sprintf("Updating status for %v: %s/%s, ", fw.Kind, fw.Namespace, fw.Name) +
-			fmt.Sprintf("observed generation %d->%d, ", fw.Status.ObservedGeneration, fw.Generation) +
-			fmt.Sprintf("observable pods %d->%d, ", fw.Status.ObservablePods, newStatus.ObservablePods) +
-			fmt.Sprintf("watched pods %d->%d", fw.Status.WatchedPods, newStatus.WatchedPods))
+	var updatedAW *argusv1alpha1.ArgusWatcher
+	for i, aw := 0, aw; ; i++ {
+		glog.V(4).Infof(fmt.Sprintf("Updating status for %v: %s/%s, ", aw.Kind, aw.Namespace, aw.Name) +
+			fmt.Sprintf("observed generation %d->%d, ", aw.Status.ObservedGeneration, aw.Generation) +
+			fmt.Sprintf("observable pods %d->%d, ", aw.Status.ObservablePods, newStatus.ObservablePods) +
+			fmt.Sprintf("watched pods %d->%d", aw.Status.WatchedPods, newStatus.WatchedPods))
 
 		// If the CustomResourceSubresources feature gate is not enabled, we
 		// must use Update instead of UpdateStatus to update the Status block
-		// of the FimWatcher resource.
+		// of the ArgusWatcher resource.
 		// UpdateStatus will not allow changes to the Spec of the resource,
 		// which is ideal for ensuring nothing other than resource status has
 		// been updated.
-		fw.Status = newStatus
-		updatedFW, updateErr = c.UpdateStatus(fw)
+		aw.Status = newStatus
+		updatedAW, updateErr = c.UpdateStatus(aw)
 		if updateErr == nil {
-			return updatedFW, nil
+			return updatedAW, nil
 		}
-		// Stop retrying if we exceed statusUpdateRetries - the fim watcher
+		// Stop retrying if we exceed statusUpdateRetries - the argus watcher
 		// will be requeued with a rate limit.
 		if i >= statusUpdateRetries {
 			break
 		}
-		// Update the FimWatcher with the latest resource version for the next
+		// Update the ArgusWatcher with the latest resource version for the next
 		// poll.
-		if fw, getErr = c.Get(fw.Name, metav1.GetOptions{}); getErr != nil {
+		if aw, getErr = c.Get(aw.Name, metav1.GetOptions{}); getErr != nil {
 			// If the GET fails we can't trust status.ObservablePods anymore.
 			// This error is bound to be more interesting than the update
 			// failure.
@@ -272,20 +278,20 @@ func updateFimWatcherStatus(c fimv1alpha1client.FimWatcherInterface, fw *fimv1al
 	return nil, updateErr
 }
 
-// calculateStatus creates a new status from a given FimWatcher and
+// calculateStatus creates a new status from a given ArgusWatcher and
 // filteredPods array.
-func calculateStatus(fw *fimv1alpha1.FimWatcher, filteredPods []*corev1.Pod, manageFimWatchersErr error) fimv1alpha1.FimWatcherStatus {
-	newStatus := fw.Status
+func calculateStatus(aw *argusv1alpha1.ArgusWatcher, filteredPods []*corev1.Pod, manageArgusWatchersErr error) argusv1alpha1.ArgusWatcherStatus {
+	newStatus := aw.Status
 	newStatus.ObservablePods = int32(len(filteredPods))
 
 	// Count the number of pods that have labels matching the labels of the pod
-	// template of the fim watcher, the matching pods may have more labels than
-	// are in the template. Because the label of podTemplateSpec is a superset
-	// of the selector of the fim watcher, so the possible matching pods must
-	// be part of the filteredPods.
+	// template of the argus watcher, the matching pods may have more labels
+	// than are in the template. Because the label of podTemplateSpec is a
+	// superset of the selector of the argus watcher, so the possible matching
+	// pods must be part of the filteredPods.
 	watchedPods := 0
 	for _, pod := range filteredPods {
-		if _, found := pod.GetAnnotations()[FimWatcherAnnotationKey]; found {
+		if _, found := pod.GetAnnotations()[ArgusWatcherAnnotationKey]; found {
 			watchedPods++
 		}
 	}
