@@ -16,6 +16,6 @@ RUN wget -qO/bin/grpc_health_probe \
 FROM alpine:edge
 COPY --from=builder /go/src/clustergarage.io/argus-controller/arguscontroller /
 COPY --from=builder /bin/grpc_health_probe /bin/
-## glog requires /tmp to exist as log_dir is /tmp by default.
+# glog requires /tmp to exist as log_dir is /tmp by default.
 COPY --from=builder /tmp /tmp
 CMD ["/arguscontroller"]

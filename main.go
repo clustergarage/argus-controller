@@ -140,6 +140,9 @@ func main() {
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(kubeclientset, time.Second*30)
 	argusInformerFactory := informers.NewSharedInformerFactory(argusclientset, time.Second*30)
 
+	// Create a single instance of a Prometheus counter.
+	arguscontroller.NewPrometheusCounter()
+
 	opts, err := arguscontroller.BuildAndStoreDialOptions(tls, tlsSkipVerify, tlsCACert, tlsClientCert, tlsClientKey, tlsServerName)
 	if err != nil {
 		log.Fatalf("Error creating dial options: %s", err.Error())

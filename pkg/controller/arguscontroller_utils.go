@@ -55,6 +55,10 @@ var (
 	// certficate.
 	TLSServerName string
 
+	// prometheusCounter is registered once per controller instance, and is
+	// used to increment the `prometheusMetricName` metric.
+	prometheusCounter *prometheus.CounterVec
+
 	annotationMux = &sync.RWMutex{}
 )
 
@@ -65,7 +69,6 @@ type argusdConnection struct {
 	hostURL string
 	handle  *pb.ArgusdHandle
 	client  pb.ArgusdClient
-	counter *prometheus.CounterVec
 }
 
 // BuildAndStoreDialOptions creates a grpc.DialOption object to be used with
@@ -128,19 +131,23 @@ func NewArgusdConnection(hostURL string, opts grpc.DialOption, client ...pb.Argu
 			return nil, fmt.Errorf("Could not connect: %v", err)
 		}
 		fc.client = pb.NewArgusdClient(conn)
-
-		// Add Prometheus counter type for tracking inotify events.
-		fc.counter = prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Name: prometheusMetricName,
-				Help: prometheusMetricHelp,
-			},
-			[]string{"arguswatcher", "event", "nodename"},
-		)
-		prometheus.Register(fc.counter)
 		go fc.ListenForMetrics()
 	}
 	return fc, nil
+}
+
+// NewPrometheusCounter will create and register a new Prometheus `CounterVec`
+// used to increment metrics collected in this controller.
+func NewPrometheusCounter() {
+	// Add Prometheus counter type for tracking inotify events.
+	prometheusCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: prometheusMetricName,
+			Help: prometheusMetricHelp,
+		},
+		[]string{"arguswatcher", "event", "nodename"},
+	)
+	prometheus.MustRegister(prometheusCounter)
 }
 
 // AddArgusdWatcher sends a message to the ArgusD daemon to create a new
@@ -212,7 +219,7 @@ func (fc *argusdConnection) ListenForMetrics() {
 	}
 	for {
 		if metric, err := stream.Recv(); err == nil {
-			fc.counter.WithLabelValues(metric.ArgusWatcher, metric.Event, metric.NodeName).Inc()
+			prometheusCounter.WithLabelValues(metric.ArgusWatcher, metric.Event, metric.NodeName).Inc()
 		}
 	}
 }
