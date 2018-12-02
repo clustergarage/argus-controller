@@ -491,7 +491,8 @@ func (awc *ArgusWatcherController) enqueueArgusWatcher(obj interface{}) {
 	awc.workqueue.AddRateLimited(key)
 }
 
-// enqueueArgusWatcherAfter ...
+// enqueueArgusWatcherAfter performs the same functionality as
+// enqueueArgusWatcher, except it is enqueued in `after` duration of time.
 func (awc *ArgusWatcherController) enqueueArgusWatcherAfter(obj interface{}, after time.Duration) {
 	key, err := controller.KeyFunc(obj)
 	if err != nil {
