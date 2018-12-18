@@ -998,13 +998,14 @@ func (awc *ArgusWatcherController) getArgusWatcherSubjects(aw *argusv1alpha1.Arg
 	var subjects []*pb.ArgusWatcherSubject
 	for _, s := range aw.Spec.Subjects {
 		subjects = append(subjects, &pb.ArgusWatcherSubject{
-			Path:      s.Paths,
-			Event:     s.Events,
-			Ignore:    s.Ignore,
-			OnlyDir:   s.OnlyDir,
-			Recursive: s.Recursive,
-			MaxDepth:  s.MaxDepth,
-			Tags:      s.Tags,
+			Path:       s.Paths,
+			Event:      s.Events,
+			Ignore:     s.Ignore,
+			OnlyDir:    s.OnlyDir,
+			Recursive:  s.Recursive,
+			MaxDepth:   s.MaxDepth,
+			FollowMove: s.FollowMove,
+			Tags:       s.Tags,
 		})
 	}
 	return subjects

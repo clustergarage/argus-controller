@@ -1454,12 +1454,13 @@ func TestGetArgusWatcherSubjects(t *testing.T) {
 	f := newFixture(t)
 	aw := newArgusWatcher("foo", awMatchedLabel)
 	aw.Spec.Subjects = []*argusv1alpha1.ArgusWatcherSubject{{
-		Paths:     []string{"/foo"},
-		Events:    []string{"bar"},
-		Ignore:    []string{"/baz"},
-		OnlyDir:   true,
-		Recursive: true,
-		MaxDepth:  2,
+		Paths:      []string{"/foo"},
+		Events:     []string{"bar"},
+		Ignore:     []string{"/baz"},
+		OnlyDir:    true,
+		Recursive:  true,
+		MaxDepth:   2,
+		FollowMove: true,
 	}}
 	f.awLister = append(f.awLister, aw)
 	f.objects = append(f.objects, aw)
@@ -1470,12 +1471,13 @@ func TestGetArgusWatcherSubjects(t *testing.T) {
 		t.Errorf("unexpected watcher subjects, expected %v, got %v", want, got)
 	}
 	expSubject := &pb.ArgusWatcherSubject{
-		Path:      []string{"/foo"},
-		Event:     []string{"bar"},
-		Ignore:    []string{"/baz"},
-		OnlyDir:   true,
-		Recursive: true,
-		MaxDepth:  2,
+		Path:       []string{"/foo"},
+		Event:      []string{"bar"},
+		Ignore:     []string{"/baz"},
+		OnlyDir:    true,
+		Recursive:  true,
+		MaxDepth:   2,
+		FollowMove: true,
 	}
 	if !reflect.DeepEqual(expSubject, subjects[0]) {
 		t.Errorf("Subject does not match\nDiff:\n %s", diff.ObjectGoPrintDiff(expSubject, subjects[0]))

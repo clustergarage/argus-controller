@@ -25,13 +25,14 @@ type ArgusWatcherSpec struct {
 
 // ArgusWatcherSubject is the spec for a ArgusWatcherSubject resource.
 type ArgusWatcherSubject struct {
-	Paths     []string          `json:"paths" protobuf:"bytes,1,rep,name=paths"`
-	Events    []string          `json:"events" protobuf:"bytes,2,rep,name=events"`
-	Ignore    []string          `json:"ignore,omitempty" protobuf:"bytes,3,rep,name=ignore"`
-	OnlyDir   bool              `json:"onlyDir,omitempty" protobuf:"bytes,4,opt,name=onlyDir"`
-	Recursive bool              `json:"recursive,omitempty" protobuf:"bytes,5,opt,name=recursive"`
-	MaxDepth  int32             `json:"maxDepth,omitempty" protobuf:"bytes,6,opt,name=maxDepth"`
-	Tags      map[string]string `json:"tags,omitempty" protobuf:"bytes,7,rep,name=tags"`
+	Paths      []string          `json:"paths" protobuf:"bytes,1,rep,name=paths"`
+	Events     []string          `json:"events" protobuf:"bytes,2,rep,name=events"`
+	Ignore     []string          `json:"ignore,omitempty" protobuf:"bytes,3,rep,name=ignore"`
+	OnlyDir    bool              `json:"onlyDir,omitempty" protobuf:"bytes,4,opt,name=onlyDir"`
+	Recursive  bool              `json:"recursive,omitempty" protobuf:"bytes,5,opt,name=recursive"`
+	MaxDepth   int32             `json:"maxDepth,omitempty" protobuf:"bytes,6,opt,name=maxDepth"`
+	FollowMove bool              `json:"followMove,omitempty" protobuf:"bytes,7,opt,name=followMove"`
+	Tags       map[string]string `json:"tags,omitempty" protobuf:"bytes,8,rep,name=tags"`
 }
 
 // ArgusWatcherStatus is the status for a ArgusWatcher resource.
