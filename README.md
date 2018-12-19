@@ -186,13 +186,14 @@ type ArgusWatcherSpec struct {
 }
 
 type ArgusWatcherSubject struct {
-  Paths     []string          `json:"paths"`
-  Events    []string          `json:"events"`
-  Ignore    []string          `json:"ignore"`
-  OnlyDir   bool              `json:"onlyDir"`
-  Recursive bool              `json:"recursive"`
-  MaxDepth  int32             `json:"maxDepth"`
-  Tags      map[string]string `json:"tags,omitempty"`
+  Paths      []string          `json:"paths"`
+  Events     []string          `json:"events"`
+  Ignore     []string          `json:"ignore"`
+  OnlyDir    bool              `json:"onlyDir"`
+  Recursive  bool              `json:"recursive"`
+  MaxDepth   int32             `json:"maxDepth"`
+  FollowMove bool              `json:"followMove"`
+  Tags       map[string]string `json:"tags,omitempty"`
 }
 ```
 
