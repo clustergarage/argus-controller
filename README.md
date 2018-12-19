@@ -2,6 +2,8 @@
 
 [![go report](https://goreportcard.com/badge/github.com/clustergarage/argus-controller?style=flat-square)](https://goreportcard.com/report/github.com/clustergarage/argus-controller)
 [![Docker Automated build](https://img.shields.io/docker/build/clustergarage/argus-controller.svg?style=flat-square)](https://hub.docker.com/r/clustergarage/argus-controller)
+[![Latest Argus
+release](https://img.shields.io/github/release/clustergarage/argus.svg?style=flat-square)](https://github.com/clustergarage/argus)
 
 This repository implements a Kubernetes controller for watching ArgusWatcher resources as defined with a CustomResourceDefinition.
 
