@@ -302,61 +302,10 @@ func (awc *ArgusWatcherController) addPod(obj interface{}) {
 		return
 	}
 
-	// If this pod is a ArgusD pod, we need to first initialize the connection
-	// to the gRPC server run on the daemon. Then a check is done on any pods
-	// running on the same node as the daemon, if they match our nodeSelector
-	// then immediately enqueue the ArgusWatcher for additions.
+	// If this pod is an ArgusD pod, initialize a connection and optionally
+	// enqueue after a series of checks.
 	if label, _ := pod.Labels["daemon"]; label == "argusd" {
-		var hostURL string
-		// Run this function with a retry, to make sure we get a connection to
-		// the daemon pod. If we exhaust all attempts, process error
-		// accordingly.
-		if retryErr := retry.RetryOnConflict(awc.backoff, func() (err error) {
-			po, err := awc.podLister.Pods(argusNamespace).Get(pod.Name)
-			if err != nil {
-				err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
-					po.Name, errors.New("could not find pod"))
-				return err
-			}
-			hostURL, err = awc.getHostURL(po)
-			if err != nil {
-				err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
-					po.Name, errors.New("pod host is not available"))
-				return err
-			}
-			// Initialize connection to gRPC server on daemon.
-			opts, err := BuildAndStoreDialOptions(TLS, TLSSkipVerify, TLSCACert, TLSClientCert, TLSClientKey, TLSServerName)
-			if err != nil {
-				return err
-			}
-			conn, err := NewArgusdConnection(hostURL, opts)
-			if err != nil {
-				return err
-			}
-			awc.argusdConnections.Store(hostURL, conn)
-			return err
-		}); retryErr != nil {
-			return
-		}
-
-		allPods, err := awc.podLister.List(labels.Everything())
-		if err != nil {
-			return
-		}
-		for _, po := range allPods {
-			if po.Spec.NodeName != pod.Spec.NodeName {
-				continue
-			}
-			aws := awc.getPodArgusWatchers(po)
-			if len(aws) == 0 {
-				continue
-			}
-
-			glog.V(4).Infof("Unannotated pod %s found: %#v.", po.Name, po)
-			for _, aw := range aws {
-				awc.enqueueArgusWatcher(aw)
-			}
-		}
+		awc.addDaemonPod(pod)
 		return
 	}
 
@@ -370,6 +319,63 @@ func (awc *ArgusWatcherController) addPod(obj interface{}) {
 	glog.V(4).Infof("Unannotated pod %s found: %#v.", pod.Name, pod)
 	for _, aw := range aws {
 		awc.enqueueArgusWatcher(aw)
+	}
+}
+
+// addDaemonPod initializes the connection to the gRPC server run on the
+// daemon. Then a check is done on any pods running on the same node as the
+// daemon, if they match our nodeSelector then immediately enqueue the
+// ArgusWatcher for additions.
+func (awc *ArgusWatcherController) addDaemonPod(pod *corev1.Pod) {
+	var hostURL string
+	// Run this function with a retry, to make sure we get a connection to
+	// the daemon pod. If we exhaust all attempts, process error
+	// accordingly.
+	if retryErr := retry.RetryOnConflict(awc.backoff, func() (err error) {
+		po, err := awc.podLister.Pods(argusNamespace).Get(pod.Name)
+		if err != nil {
+			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
+				po.Name, errors.New("could not find pod"))
+			return err
+		}
+		hostURL, err = awc.getHostURL(po)
+		if err != nil {
+			err = errorsutil.NewConflict(schema.GroupResource{Resource: "pods"},
+				po.Name, errors.New("pod host is not available"))
+			return err
+		}
+		// Initialize connection to gRPC server on daemon.
+		opts, err := BuildAndStoreDialOptions(TLS, TLSSkipVerify, TLSCACert, TLSClientCert, TLSClientKey, TLSServerName)
+		if err != nil {
+			return err
+		}
+		conn, err := NewArgusdConnection(hostURL, opts)
+		if err != nil {
+			return err
+		}
+		awc.argusdConnections.Store(hostURL, conn)
+		return err
+	}); retryErr != nil {
+		return
+	}
+
+	allPods, err := awc.podLister.List(labels.Everything())
+	if err != nil {
+		return
+	}
+	for _, po := range allPods {
+		if po.Spec.NodeName != pod.Spec.NodeName {
+			continue
+		}
+		aws := awc.getPodArgusWatchers(po)
+		if len(aws) == 0 {
+			continue
+		}
+
+		glog.V(4).Infof("Unannotated pod %s found: %#v.", po.Name, po)
+		for _, aw := range aws {
+			awc.enqueueArgusWatcher(aw)
+		}
 	}
 }
 
@@ -592,11 +598,6 @@ func (awc *ArgusWatcherController) syncArgusWatcher(key string) error {
 
 	awNeedsSync := awc.expectations.SatisfiedExpectations(key)
 
-	// Get the diff between all pods and pods that match the ArgusWatch
-	// selector.
-	var rmPods []*corev1.Pod
-	var addPods []*corev1.Pod
-
 	selector, err := metav1.LabelSelectorAsSelector(aw.Spec.Selector)
 	if err != nil {
 		runtime.HandleError(fmt.Errorf("Error converting pod selector to selector: %v", err))
@@ -607,58 +608,11 @@ func (awc *ArgusWatcherController) syncArgusWatcher(key string) error {
 		return err
 	}
 
-	// @TODO: Only get pods with annotation: ArgusWatcherAnnotationKey.
-	allPods, err := awc.podLister.Pods(aw.Namespace).List(labels.Everything())
+	// Get the diff between all pods and pods that match the ArgusWatch
+	// selector.
+	addPods, rmPods, err := awc.getPodDiff(selectedPods, aw)
 	if err != nil {
 		return err
-	}
-
-	// Get current watch state from ArgusD daemon.
-	watchStates, err := awc.getWatchStates()
-	if err != nil {
-		return err
-	}
-
-	for _, pod := range selectedPods {
-		if pod.DeletionTimestamp != nil ||
-			!podutil.IsPodReady(pod) {
-			continue
-		}
-		if wsFound := awc.isPodInWatchState(pod, watchStates); !wsFound {
-			var found bool
-			updatePodQueue.Range(func(k, v interface{}) bool {
-				// Check if pod is already in updatePodQueue.
-				if pod.Name == k {
-					found = true
-					return false
-				}
-				return true
-			})
-			if !found {
-				addPods = append(addPods, pod)
-				continue
-			}
-		}
-	}
-
-	for _, pod := range allPods {
-		if wsFound := awc.isPodInWatchState(pod, watchStates); !wsFound {
-			continue
-		}
-
-		var selFound bool
-		for _, po := range selectedPods {
-			if pod.Name == po.Name {
-				selFound = true
-				break
-			}
-		}
-		if pod.DeletionTimestamp != nil || !selFound {
-			if value, found := pod.Annotations[ArgusWatcherAnnotationKey]; found && value == aw.Name {
-				rmPods = append(rmPods, pod)
-				continue
-			}
-		}
 	}
 
 	var manageSubjectsErr error
@@ -814,13 +768,87 @@ func (awc *ArgusWatcherController) getPodArgusWatchers(pod *corev1.Pod) []*argus
 	return aws
 }
 
-// getPodKeys returns a list of pod key strings from array of pod objects.
-func getPodKeys(pods []*corev1.Pod) []string {
-	podKeys := make([]string, 0, len(pods))
-	for _, pod := range pods {
-		podKeys = append(podKeys, controller.PodKey(pod))
+// getPodDiff gets the difference between all pods and pods that match the
+// ArgusWatch selector in the form of two slices of pod types.
+func (awc *ArgusWatcherController) getPodDiff(selectedPods []*corev1.Pod, aw *argusv1alpha1.ArgusWatcher) ([]*corev1.Pod, []*corev1.Pod, error) {
+	var rmPods []*corev1.Pod
+	var addPods []*corev1.Pod
+
+	// Get current watch state from ArgusD daemon.
+	watchStates, err := awc.getWatchStates()
+	if err != nil {
+		return nil, nil, err
 	}
-	return podKeys
+
+	awc.resolveAddPods(&addPods, selectedPods, watchStates)
+	if err := awc.resolveRmPods(&rmPods, selectedPods, watchStates, aw); err != nil {
+		return nil, nil, err
+	}
+
+	return addPods, rmPods, nil
+}
+
+// resolveAddPods correlates between pods that should be watched and those that
+// the latest state check from the daemon reported were currently being
+// watched.
+func (awc *ArgusWatcherController) resolveAddPods(addPods *[]*corev1.Pod, selectedPods []*corev1.Pod, watchStates [][]*pb.ArgusdHandle) {
+	for _, pod := range selectedPods {
+		if pod.DeletionTimestamp != nil ||
+			!podutil.IsPodReady(pod) {
+			continue
+		}
+		if wsFound := awc.isPodInWatchState(pod, watchStates); !wsFound {
+			var found bool
+			updatePodQueue.Range(func(k, v interface{}) bool {
+				// Check if pod is already in updatePodQueue.
+				if pod.Name == k {
+					found = true
+					return false
+				}
+				return true
+			})
+			if !found {
+				*addPods = append(*addPods, pod)
+				continue
+			}
+		}
+	}
+}
+
+// resolveRmPods correlates between pods that are currently being watched and
+// those that the latest state check from the daemon reported were currently
+// being watched.
+func (awc *ArgusWatcherController) resolveRmPods(rmPods *[]*corev1.Pod, selectedPods []*corev1.Pod,
+	watchStates [][]*pb.ArgusdHandle, aw *argusv1alpha1.ArgusWatcher) error {
+
+	// @TODO: Only get pods with annotation: ArgusWatcherAnnotationKey.
+	allPods, err := awc.podLister.Pods(aw.Namespace).List(labels.Everything())
+	if err != nil {
+		return err
+	}
+
+	for _, pod := range allPods {
+		if wsFound := awc.isPodInWatchState(pod, watchStates); !wsFound {
+			// Current state matches, skip.
+			continue
+		}
+
+		var selFound bool
+		for _, po := range selectedPods {
+			if pod.Name == po.Name {
+				selFound = true
+				break
+			}
+		}
+		if pod.DeletionTimestamp != nil || !selFound {
+			if value, found := pod.Annotations[ArgusWatcherAnnotationKey]; found && value == aw.Name {
+				*rmPods = append(*rmPods, pod)
+				continue
+			}
+		}
+	}
+
+	return nil
 }
 
 // updatePodOnceValid first retries getting the pod hostURL to connect to the
@@ -828,12 +856,43 @@ func getPodKeys(pods []*corev1.Pod) []string {
 // the gRPC server CreateWatch function; on success it updates the appropriate
 // ArgusWatcher annotations so we can mark it now "watched".
 func (awc *ArgusWatcherController) updatePodOnceValid(podName string, aw *argusv1alpha1.ArgusWatcher) {
+	// Attempt to locate a daemon pod connection.
+	cids, hostURL, nodeName, retryErr := awc.locateDaemonConnection(podName, aw)
+	if retryErr != nil {
+		return
+	}
+	// Attempt to add an ArgusD watcher with the located daemon pod connection,
+	// and get a successful response from the daemon.
+	if retryErr := awc.attemptToAddArgusdWatcher(cids, hostURL, nodeName, podName, aw); retryErr != nil {
+		updatePodWithRetries(awc.kubeclientset.CoreV1().Pods(aw.Namespace), awc.podLister,
+			aw.Namespace, podName, func(po *corev1.Pod) error {
+				pod, err := awc.podLister.Pods(aw.Namespace).Get(podName)
+				if err != nil {
+					return err
+				}
+				po.Annotations = pod.Annotations
+				return nil
+			})
+	}
+
+	go awc.removePodFromUpdateQueue(podName)
+
+	awKey, err := controller.KeyFunc(aw)
+	if err != nil {
+		return
+	}
+	awc.expectations.CreationObserved(awKey)
+	awc.recorder.Eventf(aw, corev1.EventTypeNormal, SuccessAdded, MessageResourceAdded, nodeName)
+}
+
+// locateDaemonConnection is run with a retry, to make sure we get a
+// connection to the daemon pod. If we exhaust all attempts, process error
+// accordingly.
+func (awc *ArgusWatcherController) locateDaemonConnection(podName string, aw *argusv1alpha1.ArgusWatcher) ([]string, string, string, error) {
 	var cids []string
 	var nodeName, hostURL string
 
-	// Run this function with a retry, to make sure we get a connection to the
-	// daemon pod. If we exhaust all attempts, process error accordingly.
-	if retryErr := retry.RetryOnConflict(awc.backoff, func() (err error) {
+	retryErr := retry.RetryOnConflict(awc.backoff, func() (err error) {
 		// Be sure to clear all slice elements first in case of a retry.
 		cids = cids[:0]
 
@@ -869,14 +928,18 @@ func (awc *ArgusWatcherController) updatePodOnceValid(podName string, aw *argusv
 				pod.Name, errors.New("pod host is not available"))
 		}
 		return err
-	}); retryErr != nil {
-		return
-	}
+	})
 
-	// Run this function with a retry, to make sure we get a successful
-	// response from the daemon. If we exhaust all attempts, process error
-	// accordingly.
-	if retryErr := retry.RetryOnConflict(awc.backoff, func() (err error) {
+	return cids, hostURL, nodeName, retryErr
+}
+
+// attemptToAddArgusdWatcher is run with a retry, to make sure we get a
+// successful response from the daemon. If we exhaust all attempts, process
+// error accordingly.
+func (awc *ArgusWatcherController) attemptToAddArgusdWatcher(cids []string, hostURL string,
+	nodeName string, podName string, aw *argusv1alpha1.ArgusWatcher) error {
+
+	retryErr := retry.RetryOnConflict(awc.backoff, func() (err error) {
 		pod, err := awc.podLister.Pods(aw.Namespace).Get(podName)
 		if err != nil {
 			return err
@@ -901,26 +964,9 @@ func (awc *ArgusWatcherController) updatePodOnceValid(podName string, aw *argusv
 			fc.handle = handle
 		}
 		return err
-	}); retryErr != nil {
-		updatePodWithRetries(awc.kubeclientset.CoreV1().Pods(aw.Namespace), awc.podLister,
-			aw.Namespace, podName, func(po *corev1.Pod) error {
-				pod, err := awc.podLister.Pods(aw.Namespace).Get(podName)
-				if err != nil {
-					return err
-				}
-				po.Annotations = pod.Annotations
-				return nil
-			})
-	}
+	})
 
-	go awc.removePodFromUpdateQueue(podName)
-
-	awKey, err := controller.KeyFunc(aw)
-	if err != nil {
-		return
-	}
-	awc.expectations.CreationObserved(awKey)
-	awc.recorder.Eventf(aw, corev1.EventTypeNormal, SuccessAdded, MessageResourceAdded, nodeName)
+	return retryErr
 }
 
 // getHostURL constructs a URL from the pod's hostIP and hard-coded ArgusD
@@ -1087,4 +1133,13 @@ func (awc *ArgusWatcherController) isPodInWatchState(pod *corev1.Pod, watchState
 // future.
 func (awc *ArgusWatcherController) removePodFromUpdateQueue(podName string) {
 	updatePodQueue.Delete(podName)
+}
+
+// getPodKeys returns a list of pod key strings from array of pod objects.
+func getPodKeys(pods []*corev1.Pod) []string {
+	podKeys := make([]string, 0, len(pods))
+	for _, pod := range pods {
+		podKeys = append(podKeys, controller.PodKey(pod))
+	}
+	return podKeys
 }
