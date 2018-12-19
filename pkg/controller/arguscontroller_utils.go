@@ -218,9 +218,13 @@ func (fc *argusdConnection) ListenForMetrics() {
 		return
 	}
 	for {
-		if metric, err := stream.Recv(); err == nil {
-			prometheusCounter.WithLabelValues(metric.ArgusWatcher, metric.Event, metric.NodeName).Inc()
+		metric, err := stream.Recv()
+		// If the connection to the daemon is severed, we don't wish for this
+		// to continue looping.
+		if err != nil {
+			return
 		}
+		prometheusCounter.WithLabelValues(metric.ArgusWatcher, metric.Event, metric.NodeName).Inc()
 	}
 }
 
