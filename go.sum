@@ -11,6 +11,8 @@ github.com/clustergarage/argus-proto v0.0.0-20181205161257-f7b04a936392 h1:DB7i7
 github.com/clustergarage/argus-proto v0.0.0-20181205161257-f7b04a936392/go.mod h1:CTjnZyll7I8tJrRO0RdHXP0xmTMKfPZDePjUcclE/tc=
 github.com/clustergarage/argus-proto v0.0.0-20181218160616-03ec0810c537 h1:q5liJJRbMZMQqMDTz/bof+cVk8KY258mH31IzQwO4wQ=
 github.com/clustergarage/argus-proto v0.0.0-20181218160616-03ec0810c537/go.mod h1:CTjnZyll7I8tJrRO0RdHXP0xmTMKfPZDePjUcclE/tc=
+github.com/clustergarage/argus-proto v0.0.0-20181228194044-d9a7781868c7 h1:d5/IVS3aN9msKdDDCsMhq3pg14si0wTqW/tyHct4oOo=
+github.com/clustergarage/argus-proto v0.0.0-20181228194044-d9a7781868c7/go.mod h1:CTjnZyll7I8tJrRO0RdHXP0xmTMKfPZDePjUcclE/tc=
 github.com/coreos/bbolt v1.3.0 h1:HIgH5xUWXT914HCI671AxuTTqjj64UOFr7pHn48LUTI=
 github.com/coreos/bbolt v1.3.0/go.mod h1:iRUV2dpdMOn7Bo10OQBFzIJO9kkE559Wcmn+qkEiiKk=
 github.com/coreos/etcd v3.3.9+incompatible h1:/pWnp1yEff0z+vBEOBFLZZ22Ux5xoVozEe7X0VFyRNo=
