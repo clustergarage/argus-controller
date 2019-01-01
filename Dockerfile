@@ -1,4 +1,4 @@
-FROM golang:1.11.1 as builder
+FROM golang:1.11 as builder
 ENV GO111MODULE on
 ENV GRPC_HEALTH_PROBE_VERSION v0.2.0
 WORKDIR /go/src/clustergarage.io/argus-controller/
