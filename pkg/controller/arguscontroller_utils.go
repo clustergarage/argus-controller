@@ -163,7 +163,7 @@ func (fc *argusdConnection) AddArgusdWatcher(config *pb.ArgusdConfig) (*pb.Argus
 	glog.Infof("Received CreateWatch response: %#v", response)
 	if err != nil || response.NodeName == "" {
 		return nil, errors.NewConflict(schema.GroupResource{Resource: "nodes"},
-			config.NodeName, fmt.Errorf(fmt.Sprintf("argusd::CreateWatch failed: %v", err)))
+			config.NodeName, fmt.Errorf("argusd::CreateWatch failed: %v", err))
 	}
 	return response, nil
 }
@@ -180,7 +180,7 @@ func (fc *argusdConnection) RemoveArgusdWatcher(config *pb.ArgusdConfig) error {
 	_, err := fc.client.DestroyWatch(ctx, config)
 	if err != nil {
 		return errors.NewConflict(schema.GroupResource{Resource: "nodes"},
-			config.NodeName, fmt.Errorf(fmt.Sprintf("argusd::DestroyWatch failed: %v", err)))
+			config.NodeName, fmt.Errorf("argusd::DestroyWatch failed: %v", err))
 	}
 	return nil
 }
@@ -195,7 +195,7 @@ func (fc *argusdConnection) GetWatchState() ([]*pb.ArgusdHandle, error) {
 	stream, err := fc.client.GetWatchState(ctx, &pb.Empty{})
 	if err != nil {
 		return nil, errors.NewConflict(schema.GroupResource{Resource: "nodes"},
-			fc.hostURL, fmt.Errorf(fmt.Sprintf("argusd::GetWatchState failed: %v", err)))
+			fc.hostURL, fmt.Errorf("argusd::GetWatchState failed: %v", err))
 	}
 	for {
 		watch, err := stream.Recv()
@@ -255,10 +255,11 @@ func updateArgusWatcherStatus(c argusv1alpha1client.ArgusWatcherInterface, aw *a
 	var getErr, updateErr error
 	var updatedAW *argusv1alpha1.ArgusWatcher
 	for i, aw := 0, aw; ; i++ {
-		glog.V(4).Infof(fmt.Sprintf("Updating status for %v: %s/%s, ", aw.Kind, aw.Namespace, aw.Name) +
-			fmt.Sprintf("observed generation %d->%d, ", aw.Status.ObservedGeneration, aw.Generation) +
-			fmt.Sprintf("observable pods %d->%d, ", aw.Status.ObservablePods, newStatus.ObservablePods) +
-			fmt.Sprintf("watched pods %d->%d", aw.Status.WatchedPods, newStatus.WatchedPods))
+		glog.V(4).Infof("Updating status for %v: %s/%s, observed generation %d->%d, observable pods %d->%d, watched pods %d->%d",
+			aw.Kind, aw.Namespace, aw.Name,
+			aw.Status.ObservedGeneration, aw.Generation,
+			aw.Status.ObservablePods, newStatus.ObservablePods,
+			aw.Status.WatchedPods, newStatus.WatchedPods)
 
 		// If the CustomResourceSubresources feature gate is not enabled, we
 		// must use Update instead of UpdateStatus to update the Status block
